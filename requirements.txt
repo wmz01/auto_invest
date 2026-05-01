@@ -9,3 +9,5 @@ requests
 python-dotenv
 quantstats
 pandas-datareader
+pyarrow
+fastparquet
