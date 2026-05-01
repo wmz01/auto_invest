@@ -18,6 +18,7 @@ This project goes beyond simple retail trading scripts by implementing **Code Is
 
 ## 📁 Project Structure
 
+```
 AutomatedTrading/
 │
 ├── .env                        # API keys, Discord webhooks, and Configs
@@ -48,7 +49,7 @@ AutomatedTrading/
     ├── backtester.py           # Core time-machine engine (supports cash flows & TWR)
     ├── backtest_main.py        # Execution script to race multiple strategies
     ├── market_cache/           # Local CSV cache for historical data (bypasses rate limits)
-
+```
 ---
 
 ## 🧠 Strategy Architectures
