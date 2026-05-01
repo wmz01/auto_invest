@@ -22,7 +22,6 @@ STRATEGY_REGISTRY = {
 
 
 def main():
-    # 2. Parse Command Line Arguments
     parser = argparse.ArgumentParser(description="T+1 Algorithmic Trading Orchestrator")
     parser.add_argument(
         "--strategy",
@@ -31,10 +30,15 @@ def main():
         choices=STRATEGY_REGISTRY.keys(),
         help="The name of the strategy to execute."
     )
+    parser.add_argument(
+        "--live_mode",
+        action='store_true',
+        help="Enabling live mode (in contrast to paper money)"
+    )
     args = parser.parse_args()
 
     STRATEGY_NAME = args.strategy
-    PAPER_TRADING_MODE = True
+    PAPER_TRADING_MODE = not args.live_mode
     SYMBOL = "VOO"
 
     print("==================================================")
@@ -44,9 +48,12 @@ def main():
     # 3. Dynamically Load API Keys based on Strategy Name
     load_dotenv()
     env_suffix = STRATEGY_NAME.upper()  # converts "dummy_dca" to "DUMMY_DCA"
-
-    API_KEY = os.getenv(f"ALPACA_API_KEY_{env_suffix}")
-    SECRET_KEY = os.getenv(f"ALPACA_SECRET_KEY_{env_suffix}")
+    if PAPER_TRADING_MODE:
+        API_KEY = os.getenv(f"ALPACA_API_KEY_{env_suffix}")
+        SECRET_KEY = os.getenv(f"ALPACA_SECRET_KEY_{env_suffix}")
+    else:
+        API_KEY = os.getenv("ALPACA_API_KEY_REAL_CASH")
+        SECRET_KEY = os.getenv("ALPACA_SECRET_KEY_REAL_CASH")
 
     if not API_KEY or not SECRET_KEY:
         error_msg = f"[FATAL ERROR] API keys for {env_suffix} not found in .env file."

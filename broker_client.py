@@ -1,13 +1,15 @@
 import os
+import requests
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.broker.requests import GetAccountActivitiesRequest
-from alpaca.trading.enums import ActivityType
 from datetime import datetime, timedelta
 
 class LiveBroker:
     def __init__(self, api_key: str, secret_key: str, paper: bool = True, ledger=None, daily_budget: float = 100.0):
+        self.api_key = api_key
+        self.secret_key = secret_key
+
         self.paper = paper
         self.ledger = ledger
         self.daily_budget = daily_budget
@@ -71,21 +73,37 @@ class LiveBroker:
     def get_todays_cash_flow(self) -> float:
         """Fetches live deposits, or simulates a bi-weekly paycheck in paper mode."""
         if not self.paper:
+            # ==========================================
+            # LIVE ACCOUNT: Manual REST API Workaround
+            # ==========================================
             try:
-                req = GetAccountActivitiesRequest(
-                    activity_types=[ActivityType.CSD, ActivityType.INT],
-                    date=datetime.now().date()
-                )
-                activities = self.client.get_account_activities(req)
+                base_url = "https://paper-api.alpaca.markets" if self.paper else "https://api.alpaca.markets"
+                url = f"{base_url}/v2/account/activities"
+
+                headers = {
+                    "APCA-API-KEY-ID": self.api_key,
+                    "APCA-API-SECRET-KEY": self.secret_key,
+                    "accept": "application/json"
+                }
+
+                params = {
+                    "activity_types": "CSD,INT",
+                    "date": datetime.now().date().isoformat()
+                }
+
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                activities = response.json()
 
                 total_deposit = 0.0
                 for activity in activities:
-                    if activity.net_amount and float(activity.net_amount) > 0:
-                        total_deposit += float(activity.net_amount)
+                    net_amount = activity.get("net_amount")
+                    if net_amount and float(net_amount) > 0:
+                        total_deposit += float(net_amount)
 
-                        # Optional: Print exactly what type of cash just landed
-                        act_type = "Interest Payment" if activity.activity_type == ActivityType.INT else "External Deposit"
-                        print(f"[BROKER] Detected {act_type} today: ${float(activity.net_amount):,.2f}")
+                        # Print exactly what type of cash just landed
+                        act_type = "Interest Payment" if activity.get("activity_type") == "INT" else "External Deposit"
+                        print(f"[BROKER] Detected {act_type} today: ${float(net_amount):,.2f}")
 
                 return total_deposit
 
