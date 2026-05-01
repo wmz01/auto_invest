@@ -8,9 +8,9 @@ from notifier import send_discord_alert
 from telemetry_db import TradingLedger
 from broker_client import LiveBroker
 from data_pipeline import get_today_market_features
-from Strategies.dynamic_regime import DynamicRegimeStrategy
-from Strategies.dummy_dca import DummyDCAStrategy
-from Strategies.enhanced_dca import EnhancedDCAStrategy
+from strategies.dynamic_regime import DynamicRegimeStrategy
+from strategies.dummy_dca import DummyDCAStrategy
+from strategies.enhanced_dca import EnhancedDCAStrategy
 
 # 1. The Strategy Registry
 # Maps the command-line string to the actual class

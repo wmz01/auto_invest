@@ -7,12 +7,12 @@ from datetime import datetime
 from random import choice
 
 import pandas as pd
-from Strategies.dummy_dca import DummyDCAStrategy
-from Strategies.dynamic_regime import DynamicRegimeStrategy
-from Strategies.static_ratio_dca import StaticRatioDCAStrategy
-from Strategies.volatility_targeting import VolatilityTargetingStrategy
-from Strategies.enhanced_dca import EnhancedDCAStrategy
-from Strategies.moving_avg_dca import MovingAverageDCAStrategy
+from strategies.dummy_dca import DummyDCAStrategy
+from strategies.dynamic_regime import DynamicRegimeStrategy
+from strategies.static_ratio_dca import StaticRatioDCAStrategy
+from strategies.volatility_targeting import VolatilityTargetingStrategy
+from strategies.enhanced_dca import EnhancedDCAStrategy
+from strategies.moving_avg_dca import MovingAverageDCAStrategy
 from backtester import ProfessionalBacktester
 
 
@@ -124,4 +124,4 @@ if __name__ == "__main__":
         print_report(strategy_name, result_metrics)
 
     save_results_to_csv(all_results,
-                        filename=f"./backtest_discrete_summary/backtest_summary_{symbol}_{sim_start}_to_{sim_end}.csv")
+                        filename=f"./backtest_summary/backtest_summary_{symbol}_{sim_start}_to_{sim_end}.csv")
