@@ -3,4 +3,6 @@
 *.log
 *.html
 *.csv
+.venv
 !offline_poc/market_cache/fear-greed.csv
+**/__pycache__/
