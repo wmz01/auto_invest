@@ -67,25 +67,39 @@ All trading logic is decoupled from execution logic. By inheriting from `BaseStr
 ## ⚙️ Installation & Setup
 
 **1. Clone and Install**
+```
 git clone https://github.com/wmz01/AutomatedTrading.git
 cd AutomatedTrading
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
 
 **2. Environment Variables**
 Create a `.env` file in the root directory. You can suffix API keys with the strategy name to cleanly separate multiple paper accounts.
 
-# --- Strategy: Dynamic Regime ---
+### --- Strategy: Dynamic Regime ---
+```
 ALPACA_API_KEY_DYNAMIC_REGIME=your_paper_key
 ALPACA_SECRET_KEY_DYNAMIC_REGIME=your_paper_secret
+```
 
-# --- Strategy: Baseline DCA ---
+### --- Strategy: Baseline DCA ---
+```
 ALPACA_API_KEY_DUMMY_DCA=your_paper_key
 ALPACA_SECRET_KEY_DUMMY_DCA=your_paper_secret
+```
 
+### --- Live Cash Account ---
+```
+ALPACA_API_KEY_REAL_CASH=your_cash_account_key
+ALPACA_SECRET_KEY_REAL_CASH=your_cash_account_secret
+```
+
+### --- Discord Connection ---
+```
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-
+```
 ---
 
 ## 🚦 Usage
@@ -94,18 +108,24 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 The orchestrator relies on Python's `argparse`. You deploy strategies by passing the mapped string name to `--strategy`.
 
 To run the paper simulation daily at 5:00 PM PT:
+```
 0 17 * * 1-5 cd /path/to/AutomatedTrading && .venv/bin/python main_loop.py --strategy dynamic_regime >> dynamic_execution.log 2>&1
+```
 
 To run with real money (Live Mode):
+```
 0 17 * * 1-5 cd /path/to/AutomatedTrading && .venv/bin/python main_loop.py --strategy dynamic_regime --live >> live_execution.log 2>&1
-
+```
 ### 2. Historical Backtesting
 To race your newly developed strategy against the baselines, navigate to the `offline_poc` directory and run the backtester. It will automatically compile all historical FRED/yfinance data, simulate the bi-weekly cash flows, and generate a comparative CSV matrix.
-
+```
 cd offline_poc
 python backtest_main.py
+```
 
 ### 3. Performance Analytics
 To view institutional risk metrics (Sharpe, Calmar, Beta, Jensen's Alpha) for a live or paper account, simply run the dashboard script. It will read the local SQLite equity curve and print a tearsheet.
 
+```
 python metrics_dashboard.py
+```
