@@ -1,0 +1,127 @@
+import os
+import io
+import requests
+import yfinance as yf
+import numpy as np
+from datetime import datetime
+from random import choice
+
+import pandas as pd
+from Strategies.dummy_dca import DummyDCAStrategy
+from Strategies.dynamic_regime import DynamicRegimeStrategy
+from Strategies.static_ratio_dca import StaticRatioDCAStrategy
+from Strategies.volatility_targeting import VolatilityTargetingStrategy
+from Strategies.enhanced_dca import EnhancedDCAStrategy
+from Strategies.moving_avg_dca import MovingAverageDCAStrategy
+from backtester import ProfessionalBacktester
+
+
+def save_results_to_csv(results_dict: dict, filename: str = "backtest_summary.csv"):
+    rows = []
+    for strategy_name, metrics in results_dict.items():
+        if not metrics:
+            rows.append({"Strategy": strategy_name, "Status": "FAILED/EMPTY"})
+            continue
+        row = {"Strategy": strategy_name}
+        row.update(metrics)
+        rows.append(row)
+
+    df = pd.DataFrame(rows).fillna("N/A")
+    os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else '.', exist_ok=True)
+    df.to_csv(filename, index=False)
+    print(f"\n[+] Successfully saved {len(rows)} strategy results to '{filename}'")
+
+
+def print_report(title: str, results: dict):
+    if not results: return
+    print(f"\n==================================================")
+    print(f" {title} ")
+    print(f"==================================================")
+    print(f"Total Cash Injected    : ${results.get('total_cash_injected', 0):,.2f}")
+    print(f"Final Net Worth        : ${results.get('final_net_worth', 0):,.2f}")
+    print(f"  -> Shares Value      : ${results.get('final_shares_value', 0):,.2f}")
+    print(f"  -> Cash Remaining    : ${results.get('final_cash_remaining', 0):,.2f}")
+    print(f"  -> Interest Earned   : ${results.get('total_interest_earned', 0):,.2f}")
+    print(f"--------------------------------------------------")
+    print(f"Net Worth CAGR         : {results.get('net_worth_cagr_pct', 0)}% / yr")
+    print(f"Invested Capital CAGR  : {results.get('invested_capital_cagr_pct', 0)}% / yr")
+    print(f"Time-Weighted CAGR     : {results.get('twr_cagr_pct', 0)}% / yr")
+    print(f"--------------------------------------------------")
+    print(f"Strategy Beta          : {results.get('beta', 0)}")
+    print(f"Jensen's Alpha (CAPM)  : {results.get('jensens_alpha_pct', 0)}%")
+    print(f"Treynor Ratio          : {results.get('treynor', 0)}")
+    print(f"--------------------------------------------------")
+    print(f"Max Drawdown (MDD)     : {results.get('mdd_pct', 0)}%")
+    print(f"Time to Recovery       : {results.get('max_recovery_days', 0)} days")
+    print(f"Sharpe Ratio           : {results.get('sharpe', 0)}")
+    print(f"Sortino Ratio          : {results.get('sortino', 0)}")
+    print(f"Calmar Ratio           : {results.get('calmar', 0)}")
+
+
+# ============================================================
+# EXECUTION
+# ============================================================
+if __name__ == "__main__":
+    symbol = "VOO"
+    backtester = ProfessionalBacktester(ticker=symbol, daily_cash_flow=100.0)
+
+    sim_start = "2016-01-01"
+    sim_end = None
+
+    backtester.prepare_historical_data(start_date=sim_start, end_date=sim_end)
+
+    # 1. Universal Config for custom strategies
+    config = {
+        "daily_budget": 100.0,
+        "target_ratio": 0.85,
+        "lambda_replenish": 0.3,
+        "tau": 0.02,
+        "alpha_mult": 3.0,
+        "beta_mult": 4.0,
+        "crisis_vix_threshold": 30.0,
+        "crisis_spread_threshold": 5.0,
+        "crisis_fg_threshold": 15.0,
+        "greedy_rsi_threshold": 75.0,
+        "greedy_drawdown_threshold": -0.015,
+        "greedy_fg_threshold": 60.0,
+        "greedy_capital_preservation": 0.5,
+        # volatility targeting strategy config
+        "target_vol": 0.15,
+        # enhanced dca config
+        "edca_mild_mult": 1.5,
+        "edca_heavy_mult": 2.0,
+        "edca_severe_mult": 4.0,
+        # moving avg dca config
+        "ma_aggressiveness": 3.0,
+    }
+
+    # 2. Instantiate your LIVE strategy files
+    dummy_strategy = DummyDCAStrategy(config)
+    static_ratio_strategy = StaticRatioDCAStrategy(config)
+    vol_target_strategy = VolatilityTargetingStrategy(config)
+    dynamic_strategy = DynamicRegimeStrategy(config)
+    edca_strategy = EnhancedDCAStrategy(config)
+    ma_strategy = MovingAverageDCAStrategy(config)
+
+    # 4. Run through the engine
+    edca_results = backtester.run_custom_strategy(edca_strategy)
+    ma_results = backtester.run_custom_strategy(ma_strategy)
+    dummy_results = backtester.run_custom_strategy(dummy_strategy)
+    static_ratio_results = backtester.run_custom_strategy(static_ratio_strategy)
+    vol_results = backtester.run_custom_strategy(vol_target_strategy)
+    dynamic_results = backtester.run_custom_strategy(dynamic_strategy)
+
+    all_results = {
+        "CONTROL 1: DUMMY ISO CLASS": dummy_results,
+        "CONTROL 2: STATIC RATIO ISO CLASS": static_ratio_results,
+        "CONTROL 3: VOLATILITY TARGETING ISO": vol_results,
+        "CONTROL 4: ENHANCED DCA": edca_results,
+        "CONTROL 5: MOVING AVERAGE DCA": ma_results,
+        "EXPERIMENTAL: DYNAMIC REGIME ISO CLASS": dynamic_results
+    }
+
+    for strategy_name, result_metrics in all_results.items():
+        print_report(strategy_name, result_metrics)
+
+    save_results_to_csv(all_results,
+                        filename=f"./backtest_discrete_summary/backtest_summary_{symbol}_{sim_start}_to_{sim_end}.csv")

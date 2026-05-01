@@ -1,0 +1,6 @@
+.env
+*.db
+*.log
+*.html
+*.csv
+!offline_poc/market_cache/fear-greed.csv

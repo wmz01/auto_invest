@@ -1,0 +1,11 @@
+matplotlib
+fear-and-greed
+pandas
+yfinance
+alpaca-py
+pandas
+numpy
+requests
+python-dotenv
+quantstats
+pandas-datareader
