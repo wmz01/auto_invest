@@ -129,7 +129,7 @@ if __name__ == "__main__":
     config = {
         "daily_budget": 100.0,
         "target_ratio": 0.8,
-        "base_asset": "QQQ",  # The backtester will buy this
+        "base_asset": "TQQQ",  # The backtester will buy this
         "leveraged_asset": "SPY",  # The backtester will buy this
         "weight_base": 0.2,  # Allocates $60/day
         "weight_lev": 0.65,  # Allocates $40/day
