@@ -4,6 +4,7 @@ import sys
 from dotenv import load_dotenv
 import traceback
 from notifier import send_discord_alert
+from datetime import datetime
 # Import our custom isolated modules
 from telemetry_db import TradingLedger
 from broker_client import LiveBroker
@@ -264,8 +265,20 @@ def main():
             f"War Chest:  ${account_state.get('war_chest'):,.2f}\n"
             f"```"
         )
-
-        send_discord_alert(success_msg)
+        # The Payload
+        payload = {
+            "username": "Trading Alert Bot",
+            "embeds": [
+                {
+                    "description": success_msg,
+                    "color": 3066993,  # A nice 'Success' Green
+                    "footer": {
+                        "text": f"Executive Summary • {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    }
+                }
+            ]
+        }
+        send_discord_alert(payload)
         print("\n[SUCCESS] Nightly trading pass complete.")
 
     except Exception as e:
