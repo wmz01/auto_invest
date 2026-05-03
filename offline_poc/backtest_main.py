@@ -146,6 +146,7 @@ if __name__ == "__main__":
     overflow_results, _ = backtester.run_custom_strategy(overflow_strategy)
     rebalance_results, _ = backtester.run_custom_strategy(rebalance_strategy)
 
+    # some of these aren't comparing apples to apples. needs further update
     all_results = {
         "CONTROL 1: DUMMY ISO CLASS": dummy_results,
         "CONTROL 2: STATIC RATIO ISO CLASS": static_ratio_results,
