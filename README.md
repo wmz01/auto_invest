@@ -78,16 +78,12 @@ pip install -r requirements.txt
 **2. Environment Variables**
 Create a `.env` file in the root directory. You can suffix API keys with the strategy name to cleanly separate multiple paper accounts.
 
-### --- Strategy: Dynamic Regime ---
+### --- Paper Money Account ---
 ```
-ALPACA_API_KEY_DYNAMIC_REGIME=your_paper_key
-ALPACA_SECRET_KEY_DYNAMIC_REGIME=your_paper_secret
-```
-
-### --- Strategy: Baseline DCA ---
-```
-ALPACA_API_KEY_DUMMY_DCA=your_paper_key
-ALPACA_SECRET_KEY_DUMMY_DCA=your_paper_secret
+ALPACA_API_KEY_TEST_GROUP=your_paper_key
+ALPACA_SECRET_KEY_TEST_GROUP=your_paper_secret
+ALPACA_API_KEY_CONTROL_GROUP=your_paper_key
+ALPACA_SECRET_KEY_CONTROL_GROUP=your_paper_secret
 ```
 
 ### --- Live Cash Account ---

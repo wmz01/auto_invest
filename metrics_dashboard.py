@@ -3,12 +3,13 @@ import pandas as pd
 import quantstats as qs
 
 
-def calculate_performance_metrics(db_path: str = "dynamic_regime_paper.db"):
+def calculate_performance_metrics(db_path: str = "trading_telemetry.db"):
     print(f"Loading data from {db_path}...")
 
     # 1. Connect and Extract
     try:
         conn = sqlite3.connect(db_path)
+        # Using SELECT * automatically grabs our new 'base_asset_price' column
         df = pd.read_sql_query("SELECT * FROM daily_equity_curve ORDER BY date ASC", conn)
         conn.close()
     except Exception as e:
@@ -35,8 +36,8 @@ def calculate_performance_metrics(db_path: str = "dynamic_regime_paper.db"):
     strategy_returns = (current_nw - (prev_nw + cf)) / (prev_nw + cf)
     strategy_returns = strategy_returns.dropna()
 
-    # Benchmark returns remain a simple percentage change
-    benchmark_returns = df['benchmark_voo_price'].pct_change().dropna()
+    # UPDATED: Use the new generalized base asset column
+    benchmark_returns = df['base_asset_price'].pct_change().dropna()
 
     # Align indexes in case of any data gaps
     strategy_returns, benchmark_returns = strategy_returns.align(benchmark_returns, join='inner')
@@ -68,7 +69,8 @@ def calculate_performance_metrics(db_path: str = "dynamic_regime_paper.db"):
         print(f"Sortino Ratio:     {sortino:.2f}")
         print(f"Calmar Ratio:      {calmar:.2f}")
         print("-" * 30)
-        print(f"Beta (vs VOO):     {beta:.2f}")
+        # UPDATED: Label is now asset-agnostic
+        print(f"Beta (vs Base):    {beta:.2f}")
         print(f"Jensen's Alpha:    {alpha * 100:.2f}%")
         print(f"Treynor Ratio:     {treynor:.4f}")
 
@@ -79,10 +81,10 @@ def calculate_performance_metrics(db_path: str = "dynamic_regime_paper.db"):
     # This will create a beautiful, institutional-grade PDF/HTML report in your folder
     print("\nGenerating comprehensive HTML tear sheet...")
     qs.reports.html(strategy_returns, benchmark=benchmark_returns, output='strategy_tearsheet.html',
-                    title="Dynamic Regime Algorithm Performance")
+                    title="Algorithmic Strategy Performance")
     print("Saved as 'strategy_tearsheet.html'. Open this file in your web browser.")
 
 
 if __name__ == "__main__":
-    # You can pass the specific database name here if tracking multiple strategies
-    calculate_performance_metrics("dynamic_regime_paper.db")
+    # Feel free to change this to whatever you named your new DB file
+    calculate_performance_metrics("trading_telemetry.db")

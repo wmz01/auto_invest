@@ -36,10 +36,15 @@ def main():
         action='store_true',
         help="Enabling live mode (in contrast to paper money)"
     )
+    parser.add_argument(
+        "--is_test",
+        action='store_true',
+        help="For paper account, we split the data into test or control groups for A/B tests. If enabled, then it's test group, otherwise it's control group")
     args = parser.parse_args()
 
     STRATEGY_NAME = args.strategy
     PAPER_TRADING_MODE = not args.live_mode
+    is_test_group = args.is_test
 
     print("==================================================")
     print(f" INITIATING T+1 ORCHESTRATOR: {STRATEGY_NAME.upper()} ")
@@ -49,8 +54,13 @@ def main():
     load_dotenv()
     env_suffix = STRATEGY_NAME.upper()
     if PAPER_TRADING_MODE:
-        API_KEY = os.getenv(f"ALPACA_API_KEY_{env_suffix}")
-        SECRET_KEY = os.getenv(f"ALPACA_SECRET_KEY_{env_suffix}")
+        if is_test_group:
+            API_KEY = os.getenv(f"ALPACA_API_KEY_TEST_GROUP")
+            SECRET_KEY = os.getenv(f"ALPACA_SECRET_KEY_TEST_GROUP")
+        else:
+            API_KEY = os.getenv(f"ALPACA_API_KEY_CONTROL_GROUP")
+            SECRET_KEY = os.getenv(f"ALPACA_SECRET_KEY_CONTROL_GROUP")
+
     else:
         API_KEY = os.getenv("ALPACA_API_KEY_REAL_CASH")
         SECRET_KEY = os.getenv("ALPACA_SECRET_KEY_REAL_CASH")
@@ -141,7 +151,8 @@ def main():
             base_symbol=base_sym, leveraged_symbol=lev_sym
         )
         current_base_price = market_data.get("close")
-        # Account state no longer requires current_price because it scans Alpaca directly!
+
+        todays_deposit = broker.get_todays_cash_flow()
         account_state = broker.get_account_state()
 
         # ==========================================
@@ -198,7 +209,6 @@ def main():
 
             else:
                 order_responses[sym] = {"order_id": "SKIPPED", "status": "skipped"}
-        todays_deposit = broker.get_todays_cash_flow()
 
         # UPDATED: Using 'base_price' instead of 'voo_price'
         ledger.log_equity_snapshot(
@@ -219,9 +229,12 @@ def main():
         # Format Discord summary for multiple assets
         order_details_str = ""
         for sym, target_amount in pending_orders.items():
-            direction = "BUY" if target_amount > 0 else "SELL"
-            order_details_str += f"> **{sym}:** {direction} `${abs(target_amount):,.2f}`\n"
-
+            if target_amount >= 1.00:
+                order_details_str += f"> **{sym}:** 🟢 BUY `${target_amount:,.2f}`\n"
+            elif target_amount <= -1.00:
+                order_details_str += f"> **{sym}:** 🔴 SELL `${abs(target_amount):,.2f}`\n"
+            else:
+                order_details_str += f"> **{sym}:** ⚪ HOLD `$0.00`\n"
         # UPDATED: Discord alert now dynamically prints the correct Base Asset ticker
         success_msg = (
             f"🟢 **Nightly Trading Pass Complete**\n"
