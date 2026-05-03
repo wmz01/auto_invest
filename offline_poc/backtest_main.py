@@ -1,19 +1,15 @@
 import os
-import io
-import requests
-import yfinance as yf
-import numpy as np
-from datetime import datetime
-from random import choice
 
 import pandas as pd
 from strategies.dummy_dca import DummyDCAStrategy
 from strategies.dynamic_regime import DynamicRegimeStrategy
+from strategies.fixed_split_baseline import FixedSplitStrategy
 from strategies.static_ratio_dca import StaticRatioDCAStrategy
 from strategies.volatility_targeting import VolatilityTargetingStrategy
-from strategies.enhanced_dca import EnhancedDCAStrategy
+from strategies.enhanced_dca import EnhancedDCAStrategy, OverflowEDCAStrategy, FixedSplitEDCA
 from strategies.moving_avg_dca import MovingAverageDCAStrategy
-from strategies.zscore_leverage import ZScoreLeverageStrategy
+from strategies.zscore_leverage import ZScoreMarginStrategy, ZScoreBaseStrategy, FlowScaledZScoreStrategy
+from strategies.dynamic_rebalance import DynamicRebalanceEDCA
 from backtester import ProfessionalBacktester
 
 
@@ -63,16 +59,24 @@ def print_report(title: str, results: dict):
 # EXECUTION
 # ============================================================
 if __name__ == "__main__":
-    symbol = "VOO"
-    backtester = ProfessionalBacktester(ticker=symbol, daily_cash_flow=100.0)
 
+    symbol = "SPY"
+    leverage_asset = "TQQQ"
     sim_start = "2016-01-01"
     sim_end = None
 
-    backtester.prepare_historical_data(start_date=sim_start, end_date=sim_end)
+    backtester = ProfessionalBacktester(daily_cash_flow=100.0)
+
+    # Pre-fetch every ticker any of your strategies might need
+    backtester.prepare_historical_data(
+        symbols=["QQQ", "SPY", "VGT", "VOO", "TQQQ"],
+        start_date=sim_start,
+        end_date=sim_end
+    )
 
     # 1. Universal Config for custom strategies
     config = {
+        "tax_rate": 0.35,
         "daily_budget": 100.0,
         "target_ratio": 0.8,
         "lambda_replenish": 0.3,
@@ -91,9 +95,15 @@ if __name__ == "__main__":
         # enhanced dca config
         "edca_mild_mult": 1.5,
         "edca_heavy_mult": 2.0,
-        "edca_severe_mult": 4.0,
+        "edca_severe_mult": 3.0,
         # moving avg dca config
         "ma_aggressiveness": 3.0,
+        # Z-Score Leverage config
+        "lookback_window": 50,  # Dynamic MA/Z-Score window to use
+        "start_z": -1.5,  # Start scaling into TQQQ here
+        "max_z": -3.0,  # 100% TQQQ here
+        "base_asset": symbol,
+        "leveraged_asset": leverage_asset
     }
 
     # 2. Instantiate your LIVE strategy files
@@ -103,22 +113,44 @@ if __name__ == "__main__":
     dynamic_strategy = DynamicRegimeStrategy(config)
     edca_strategy = EnhancedDCAStrategy(config)
     ma_strategy = MovingAverageDCAStrategy(config)
+    zscore_strategy = ZScoreBaseStrategy(config)
+    overflow_strategy = OverflowEDCAStrategy(config)
+    rebalance_strategy = DynamicRebalanceEDCA(config)
+
+    config = {
+        "base_asset": "QQQ",  # The backtester will buy this
+        "leveraged_asset": "SPY",  # The backtester will buy this
+        "weight_base": 0.60,  # Allocates $60/day
+        "weight_lev": 0.40,  # Allocates $40/day
+    }
+    fixed_strategy = FixedSplitStrategy(config)
+    fixed_edca_strategy = FixedSplitEDCA(config)
 
     # 4. Run through the engine
     edca_results, _ = backtester.run_custom_strategy(edca_strategy)
+    fixed_split_results, _ = backtester.run_custom_strategy(fixed_strategy)
+    fixed_edca_results, _ = backtester.run_custom_strategy(fixed_edca_strategy)
     ma_results, _ = backtester.run_custom_strategy(ma_strategy)
     dummy_results, _ = backtester.run_custom_strategy(dummy_strategy)
     static_ratio_results, _ = backtester.run_custom_strategy(static_ratio_strategy)
     vol_results, _ = backtester.run_custom_strategy(vol_target_strategy)
     dynamic_results, _ = backtester.run_custom_strategy(dynamic_strategy)
+    zscore_results, _ = backtester.run_custom_strategy(zscore_strategy)
+    overflow_results, _ = backtester.run_custom_strategy(overflow_strategy)
+    rebalance_results, _ = backtester.run_custom_strategy(rebalance_strategy)
 
     all_results = {
         "CONTROL 1: DUMMY ISO CLASS": dummy_results,
         "CONTROL 2: STATIC RATIO ISO CLASS": static_ratio_results,
-        "CONTROL 3: VOLATILITY TARGETING ISO": vol_results,
-        "CONTROL 4: ENHANCED DCA": edca_results,
-        "CONTROL 5: MOVING AVERAGE DCA": ma_results,
-        "EXPERIMENTAL: DYNAMIC REGIME ISO CLASS": dynamic_results
+        "CONTROL 3: FIXED SPLIT BASELINE": fixed_split_results,
+        "CONTROL 4: VOLATILITY TARGETING ISO": vol_results,
+        "CONTROL 5: ENHANCED DCA": edca_results,
+        "CONTROL 6: FIXED SPLIT EDCA": fixed_edca_results,
+        # "CONTROL 6: MOVING AVERAGE DCA": ma_results,
+        # "EXPERIMENTAL: DYNAMIC REGIME ISO CLASS": dynamic_results,
+        # "EXPERIMENTAL 2: Z-SCORE CONVEXITY": zscore_results,
+        "EXPERIMENTAL 3: OVERFLOW TQQQ": overflow_results,
+        "EXPERIMENTAL 4: DYNAMIC REBALANCING": rebalance_results
     }
 
     for strategy_name, result_metrics in all_results.items():
