@@ -136,6 +136,7 @@ if __name__ == "__main__":
     }
 
     # 1. Instantiate Strategies
+    # baseline_strategy = DummyDCAStrategy(config)
     baseline_strategy = FixedSplitEDCA(config)
 
     config = {
@@ -148,18 +149,18 @@ if __name__ == "__main__":
         "edca_heavy_mult": 2.0,
         "edca_severe_mult": 3.0,
     }
-    overflow_strategy = DynamicRebalanceEDCA(config)
-    # overflow_strategy = OverflowEDCAStrategy(config)
+    # experiment_strategy = DynamicRebalanceEDCA(config)
+    experiment_strategy = OverflowEDCAStrategy(config)
 
     # 2. Run Backtests
-    print(f"\nRunning Baseline Dummy DCA ({BASE_TICKER})...")
+    print(f"\nRunning Baseline Strategy...")
     base_metrics, base_df = backtester.run_custom_strategy(baseline_strategy)
 
-    print(f"Running Overflow EDCA Strategy ({BASE_TICKER}/{LEV_TICKER})...")
-    strat_metrics, strat_df = backtester.run_custom_strategy(overflow_strategy)
+    print(f"Running Experiment Strategy...")
+    strat_metrics, strat_df = backtester.run_custom_strategy(experiment_strategy)
 
     # 3. Print Final End States
-    print_final_state(f"BASELINE (DUMMY DCA {BASE_TICKER})", base_metrics, config)
+    print_final_state(f"BASELINE ", base_metrics, config)
     print_final_state(f"OVERFLOW STRATEGY", strat_metrics, config)
 
     # 4. Generate Visualizations
