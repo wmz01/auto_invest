@@ -73,12 +73,25 @@ if __name__ == "__main__":
         start_date=sim_start,
         end_date=sim_end
     )
-
-    # 1. Universal Config for custom strategies
-    config = {
+    # 1. Base Universal Config (Applies to all strategies)
+    base_config = {
         "tax_rate": 0.35,
         "daily_budget": 100.0,
         "target_ratio": 0.8,
+        "base_asset": symbol,  # Provided from your outer scope
+        "leveraged_asset": leverage_asset  # Provided from your outer scope
+    }
+
+    dummy_strategy = DummyDCAStrategy({**base_config})
+    static_ratio_strategy = StaticRatioDCAStrategy({**base_config})
+
+    # 2. Strategy-Specific Configs
+    vol_target_config = {
+        "target_vol": 0.15,
+    }
+    vol_target_strategy = VolatilityTargetingStrategy({**base_config, **vol_target_config})
+
+    dynamic_regime_config = {
         "lambda_replenish": 0.3,
         "tau": 0.02,
         "alpha_mult": 3.0,
@@ -90,43 +103,38 @@ if __name__ == "__main__":
         "greedy_drawdown_threshold": -0.015,
         "greedy_fg_threshold": 60.0,
         "greedy_capital_preservation": 0.5,
-        # volatility targeting strategy config
-        "target_vol": 0.15,
-        # enhanced dca config
+    }
+    dynamic_strategy = DynamicRegimeStrategy({**base_config, **dynamic_regime_config})
+
+
+    ma_config = {
+        "ma_aggressiveness": 3.0,
+    }
+    ma_strategy = MovingAverageDCAStrategy({**base_config, **ma_config})
+
+    edca_config = {
         "edca_mild_mult": 1.5,
         "edca_heavy_mult": 2.0,
         "edca_severe_mult": 3.0,
-        # moving avg dca config
-        "ma_aggressiveness": 3.0,
-        # Z-Score Leverage config
-        "lookback_window": 50,  # Dynamic MA/Z-Score window to use
-        "start_z": -1.5,  # Start scaling into TQQQ here
-        "max_z": -3.0,  # 100% TQQQ here
-        "base_asset": symbol,
-        "leveraged_asset": leverage_asset
     }
+    edca_strategy = EnhancedDCAStrategy({**base_config, **edca_config})
+    # Assuming these two share the EDCA logic/params
+    overflow_strategy = OverflowEDCAStrategy({**base_config, **edca_config})
+    rebalance_strategy = DynamicRebalanceEDCA({**base_config, **edca_config})
 
-    # 2. Instantiate your LIVE strategy files
-    dummy_strategy = DummyDCAStrategy(config)
-    static_ratio_strategy = StaticRatioDCAStrategy(config)
-    vol_target_strategy = VolatilityTargetingStrategy(config)
-    dynamic_strategy = DynamicRegimeStrategy(config)
-    edca_strategy = EnhancedDCAStrategy(config)
-    ma_strategy = MovingAverageDCAStrategy(config)
-    zscore_strategy = ZScoreBaseStrategy(config)
-    overflow_strategy = OverflowEDCAStrategy(config)
-    rebalance_strategy = DynamicRebalanceEDCA(config)
-
-    config = {
-        "base_asset": "QQQ",  # The backtester will buy this
-        "leveraged_asset": "SPY",  # The backtester will buy this
-        "weight_base": 0.60,  # Allocates $60/day
-        "weight_lev": 0.40,  # Allocates $40/day
+    fixed_split_config = {
+        # Notice: We can override the base assets here just for these strategies
+        "base_asset": "QQQ",
+        "leveraged_asset": "SPY",
+        "weight_base": 0.60,
+        "weight_lev": 0.40,
     }
-    fixed_strategy = FixedSplitStrategy(config)
-    fixed_edca_strategy = FixedSplitEDCA(config)
+    # Fixed splits get the base config, overwritten/appended by fixed_split_config
+    fixed_strategy = FixedSplitStrategy({**base_config, **fixed_split_config})
+    # Fixed EDCA gets base, fixed split params, AND the EDCA multipliers combined
+    fixed_edca_strategy = FixedSplitEDCA({**base_config, **fixed_split_config, **edca_config})
 
-    # 4. Run through the engine
+    # 4. Run through the engine (Unchanged)
     edca_results, _ = backtester.run_custom_strategy(edca_strategy)
     fixed_split_results, _ = backtester.run_custom_strategy(fixed_strategy)
     fixed_edca_results, _ = backtester.run_custom_strategy(fixed_edca_strategy)
@@ -135,7 +143,6 @@ if __name__ == "__main__":
     static_ratio_results, _ = backtester.run_custom_strategy(static_ratio_strategy)
     vol_results, _ = backtester.run_custom_strategy(vol_target_strategy)
     dynamic_results, _ = backtester.run_custom_strategy(dynamic_strategy)
-    zscore_results, _ = backtester.run_custom_strategy(zscore_strategy)
     overflow_results, _ = backtester.run_custom_strategy(overflow_strategy)
     rebalance_results, _ = backtester.run_custom_strategy(rebalance_strategy)
 
