@@ -105,12 +105,12 @@ The orchestrator relies on Python's `argparse`. You deploy strategies by passing
 
 To run the paper simulation daily at 5:00 PM PT:
 ```
-0 17 * * 1-5 cd /path/to/AutomatedTrading && .venv/bin/python main_loop.py --strategy dynamic_regime >> dynamic_execution.log 2>&1
+0 17 * * 1-5 cd /path/to/AutomatedTrading && .venv/bin/python main_loop.py --strategy fixed_split_edca >> paper_execution.log 2>&1
 ```
 
 To run with real money (Live Mode):
 ```
-0 17 * * 1-5 cd /path/to/AutomatedTrading && .venv/bin/python main_loop.py --strategy dynamic_regime --live >> live_execution.log 2>&1
+0 17 * * 1-5 cd /path/to/AutomatedTrading && .venv/bin/python main_loop.py --strategy fixed_split_edca --live >> live_execution.log 2>&1
 ```
 ### 2. Historical Backtesting
 To race your newly developed strategy against the baselines, navigate to the `offline_poc` directory and run the backtester. It will automatically compile all historical FRED/yfinance data, simulate the bi-weekly cash flows, and generate a comparative CSV matrix.
