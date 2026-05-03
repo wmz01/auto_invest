@@ -51,11 +51,11 @@ class TradingLedger:
         self.cursor.execute('''
                             CREATE TABLE IF NOT EXISTS daily_equity_curve
                             (
-                                date                TEXT PRIMARY KEY,
-                                total_net_worth     REAL,
-                                free_cash           REAL,
-                                benchmark_voo_price REAL,
-                                net_cash_flow       REAL DEFAULT 0.0
+                                date             TEXT PRIMARY KEY,
+                                total_net_worth  REAL,
+                                free_cash        REAL,
+                                base_asset_price REAL, 
+                                net_cash_flow    REAL
                             )
                             ''')
 
@@ -70,41 +70,52 @@ class TradingLedger:
                             ''')
         self.conn.commit()
 
-    def log_equity_snapshot(self, net_worth: float, free_cash: float, voo_price: float, cash_flow: float = 0.0):
+    def log_equity_snapshot(self, net_worth: float, free_cash: float, base_price: float, cash_flow: float = 0.0):
+        from datetime import datetime  # Just in case it's not imported at the top
         today = datetime.now().strftime("%Y-%m-%d")
 
         self.cursor.execute('''
             INSERT OR REPLACE INTO daily_equity_curve 
-            (date, total_net_worth, free_cash, benchmark_voo_price, net_cash_flow)
+            (date, total_net_worth, free_cash, base_asset_price, net_cash_flow)
             VALUES (?, ?, ?, ?, ?)
-        ''', (today, net_worth, free_cash, voo_price, cash_flow))
-        self.conn.commit()
-        print(f"[DATABASE] Logged equity snapshot: Net Worth=${net_worth:,.2f} | Deposit=${cash_flow:,.2f}")
+        ''', (today, net_worth, free_cash, base_price, cash_flow))
 
-    def log_execution(self, features: dict, regime: str, war_chest: float, target_buy: float, order_id: str, status: str):
-        """Pass the whole 'features' dictionary from data_pipeline to log it all cleanly."""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.cursor.execute('''
-            INSERT INTO execution_logs 
-            (timestamp, voo_close, vix_value, rsi_value, spread_value, fear_greed_value, 
-             regime_detected, war_chest_before, target_buy_amount, alpaca_order_id, order_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            now,
-            features.get("close"),
-            features.get("vix"),
-            features.get("rsi"),
-            features.get("spread"),
-            features.get("fear_greed"),
-            regime,
-            war_chest,
-            target_buy,
-            order_id,
-            status
-        ))
         self.conn.commit()
-        print(f"[DATABASE] Logged {regime} execution. VOO closed at ${features.get('close'):.2f}")
+        print(
+            f"[DATABASE] Logged equity snapshot: Net Worth=${net_worth:,.2f} | Base Asset=${base_price:,.2f} | Deposit=${cash_flow:,.2f}")
+    def log_execution(self, features: dict, regime: str, war_chest: float, target_orders: dict, order_responses: dict):
+        """
+        Safely serializes multi-asset order routing into JSON strings for database insertion.
+        """
+        # Serialize the dictionaries to strings so they fit in standard TEXT columns
+        target_buy_str = json.dumps(target_orders)
 
+        # Extract IDs and Statuses from the complex response dictionary
+        ids_dict = {sym: resp.get("order_id", "N/A") for sym, resp in order_responses.items()}
+        statuses_dict = {sym: resp.get("status", "N/A") for sym, resp in order_responses.items()}
+
+        order_ids_str = json.dumps(ids_dict)
+        statuses_str = json.dumps(statuses_dict)
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                           INSERT INTO executions (date, close_price, vix, spread, rsi, fear_greed,
+                                                   regime, war_chest, target_buy, order_id, status)
+                           VALUES (DATE('now', 'localtime'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ''', (
+                               features.get("close", 0.0),
+                               features.get("vix", 15.0),
+                               features.get("spread", 2.0),
+                               features.get("rsi", 50.0),
+                               features.get("fear_greed", 50.0),
+                               regime,
+                               war_chest,
+                               target_buy_str,  # Now a JSON string (e.g., '{"QQQ": 60, "SPY": 40}')
+                               order_ids_str,  # Now a JSON string
+                               statuses_str  # Now a JSON string
+                           ))
+            conn.commit()
     def check_if_already_run_today(self) -> bool:
         today = datetime.now().strftime("%Y-%m-%d")
 

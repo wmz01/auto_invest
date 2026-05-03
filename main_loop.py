@@ -10,14 +10,15 @@ from broker_client import LiveBroker
 from data_pipeline import get_today_market_features
 from strategies.dynamic_regime import DynamicRegimeStrategy
 from strategies.dummy_dca import DummyDCAStrategy
-from strategies.enhanced_dca import EnhancedDCAStrategy
+from strategies.enhanced_dca import EnhancedDCAStrategy, OverflowEDCAStrategy, FixedSplitEDCA
 
 # 1. The Strategy Registry
-# Maps the command-line string to the actual class
 STRATEGY_REGISTRY = {
     "dynamic_regime": DynamicRegimeStrategy,
     "dummy_dca": DummyDCAStrategy,
     "enhanced_dca": EnhancedDCAStrategy,
+    "overflow_edca": OverflowEDCAStrategy,
+    "fixed_split_edca": FixedSplitEDCA
 }
 
 
@@ -39,7 +40,6 @@ def main():
 
     STRATEGY_NAME = args.strategy
     PAPER_TRADING_MODE = not args.live_mode
-    SYMBOL = "VOO"
 
     print("==================================================")
     print(f" INITIATING T+1 ORCHESTRATOR: {STRATEGY_NAME.upper()} ")
@@ -47,7 +47,7 @@ def main():
 
     # 3. Dynamically Load API Keys based on Strategy Name
     load_dotenv()
-    env_suffix = STRATEGY_NAME.upper()  # converts "dummy_dca" to "DUMMY_DCA"
+    env_suffix = STRATEGY_NAME.upper()
     if PAPER_TRADING_MODE:
         API_KEY = os.getenv(f"ALPACA_API_KEY_{env_suffix}")
         SECRET_KEY = os.getenv(f"ALPACA_SECRET_KEY_{env_suffix}")
@@ -58,32 +58,26 @@ def main():
     if not API_KEY or not SECRET_KEY:
         error_msg = f"[FATAL ERROR] API keys for {env_suffix} not found in .env file."
         print(error_msg)
-        send_discord_alert(f"🚨 **CRITICAL BOT FAILURE** 🚨\n"
-                        f"**Strategy Model: {STRATEGY_NAME} **\n"
-                        f"{error_msg}")
+        send_discord_alert(f"🚨 **CRITICAL BOT FAILURE** 🚨\n**Strategy Model: {STRATEGY_NAME} **\n{error_msg}")
         sys.exit(1)
 
-    # 4. Universal Configuration
-    # The dummy strategy will just ignore the variables it doesn't need
+    # 4. Universal Configuration (Upgraded for Multi-Asset)
     STRATEGY_CONFIG = {
         "daily_budget": 100.0,
         "target_ratio": 0.85,
-        "lambda_replenish": 0.5,
-        "tau": 0.02,
-        "alpha_mult": 3.0,
-        "beta_mult": 4.0,
+        "base_asset": "QQQ",  # Core Asset
+        "leveraged_asset": "SPY",  # Secondary/Leveraged Asset
+        "weight_base": 0.60,
+        "weight_lev": 0.40,
+        "edca_mild_mult": 1.5,
+        "edca_heavy_mult": 2.0,
+        "edca_severe_mult": 3.0,
         "crisis_vix_threshold": 30.0,
-        "crisis_spread_threshold": 5.0,
-        "crisis_fg_threshold": 15.0,
-        "greedy_rsi_threshold": 75.0,
-        "greedy_drawdown_threshold": -0.015,
-        "greedy_fg_threshold": 60.0,
-        "greedy_capital_preservation": 0.5
+        "max_lev_weight": 0.25,
+        "tax_rate": 0.35
     }
 
-    # Initialize Infrastructure
     ledger = TradingLedger(strategy_name=STRATEGY_NAME, paper=PAPER_TRADING_MODE)
-
     broker = LiveBroker(
         api_key=API_KEY,
         secret_key=SECRET_KEY,
@@ -106,8 +100,6 @@ def main():
             for order_id in unreconciled_orders:
                 details = broker.get_order_status(order_id)
                 status = details['status']
-
-                # Format the ID to make the Discord message cleaner
                 short_id = order_id[:8]
 
                 if status not in ['accepted', 'new', 'queued', 'unknown']:
@@ -118,7 +110,6 @@ def main():
                         filled_price=details['filled_avg_price']
                     )
                     if status == 'filled':
-                        # MODIFICATION: Execute paper simulation math ONLY if in paper mode
                         if PAPER_TRADING_MODE:
                             filled_qty = float(details['filled_qty'])
                             filled_price = float(details['filled_avg_price'])
@@ -128,10 +119,8 @@ def main():
                             if state:
                                 new_cash = state['current_cash'] - cost_basis
                                 new_shares = state['current_shares'] + filled_qty
-                                # Add 1 day of 5% interest on the remaining uninvested cash
                                 daily_interest_rate = 0.05 / 252
                                 new_cash = new_cash * (1 + daily_interest_rate)
-
                                 ledger.update_paper_state(new_cash, new_shares, state['next_deposit_date'])
 
                         reconciliation_summary += f"> Order `{short_id}`: **FILLED** ({details['filled_qty']} shares @ ${details['filled_avg_price']:.2f})\n"
@@ -144,9 +133,16 @@ def main():
         # PHASE 2: STATE & DATA INGESTION
         # ==========================================
         print("\n[PHASE 2] Ingesting State & Market Features...")
-        market_data = get_today_market_features(api_key=API_KEY, secret_key=SECRET_KEY, symbol=SYMBOL)
-        current_voo_price = market_data.get("close")
-        account_state = broker.get_account_state(current_price=current_voo_price)
+        base_sym = STRATEGY_CONFIG.get("base_asset", "QQQ")
+        lev_sym = STRATEGY_CONFIG.get("leveraged_asset", None)
+
+        market_data = get_today_market_features(
+            api_key=API_KEY, secret_key=SECRET_KEY,
+            base_symbol=base_sym, leveraged_symbol=lev_sym
+        )
+        current_base_price = market_data.get("close")
+        # Account state no longer requires current_price because it scans Alpaca directly!
+        account_state = broker.get_account_state()
 
         # ==========================================
         # PHASE 3: IDEMPOTENCY CHECK
@@ -154,12 +150,10 @@ def main():
         print("\n[PHASE 3] Checking Idempotency Lock...")
         if ledger.check_if_already_run_today():
             print(" -> [HALT] Algorithm has already executed a successful pass today.")
-            print(" -> Shutting down safely to prevent duplicate orders.")
             idem_msg = (f"🔴 ** Warning: why is this script executed more than once today? **\n"
                         f"**Strategy Model: {STRATEGY_NAME} **\n"
                         f"      Algorithm has already executed a successful pass today.\n"
-                        f"      Shutting down safely to prevent duplicate orders.\n"
-                        )
+                        f"      Shutting down safely to prevent duplicate orders.\n")
             send_discord_alert(idem_msg)
             sys.exit(0)
         print(" -> Lock clear. Proceeding to execution.")
@@ -168,8 +162,6 @@ def main():
         # PHASE 4: INFERENCE (STRATEGY MATH)
         # ==========================================
         print("\n[PHASE 4] Running Inference Engine...")
-
-        # Dynamically instantiate the correct strategy class from the registry
         StrategyClass = STRATEGY_REGISTRY[STRATEGY_NAME]
         active_strategy = StrategyClass(config=STRATEGY_CONFIG)
 
@@ -178,27 +170,41 @@ def main():
             account_state=account_state
         )
 
-        target_buy_amount = inference_result["target_buy_amount"]
-        regime = inference_result["regime"]
+        # Legacy Fallback Router
+        regime = inference_result.get("regime_detected", inference_result.get("regime", "UNKNOWN"))
+        if "target_orders" in inference_result:
+            pending_orders = inference_result["target_orders"]
+        else:
+            # Wrap old output in the new dictionary format
+            pending_orders = {base_sym: inference_result.get("target_buy_amount", 0.0)}
 
         print(f" -> Inference Complete: Detected {regime} REGIME.")
-        print(f" -> Target Buy Amount: ${target_buy_amount:,.2f}")
         # ==========================================
         # PHASE 5: EXECUTION & LOGGING
         # ==========================================
         print("\n[PHASE 5] Execution & Telemetry...")
-        if target_buy_amount >= 1.00:
-            order_response = broker.queue_market_on_open_buy(symbol=SYMBOL, notional_amount=target_buy_amount)
-        else:
-            order_response = {"order_id": "SKIPPED", "status": "skipped"}
 
-        # Automatically fetch any ACH/Wire deposits that landed today
+        order_responses = {}
+        for sym, target_amount in pending_orders.items():
+            if target_amount >= 1.00:
+                print(f" -> Queuing BUY for {sym}: ${target_amount:,.2f}")
+                resp = broker.queue_market_on_open_buy(symbol=sym, notional_amount=target_amount)
+                order_responses[sym] = resp
+
+            elif target_amount <= -1.00:
+                print(f" -> Queuing SELL for {sym}: ${abs(target_amount):,.2f}")
+                resp = broker.queue_market_on_open_sell(symbol=sym, notional_amount=abs(target_amount))
+                order_responses[sym] = resp
+
+            else:
+                order_responses[sym] = {"order_id": "SKIPPED", "status": "skipped"}
         todays_deposit = broker.get_todays_cash_flow()
 
+        # UPDATED: Using 'base_price' instead of 'voo_price'
         ledger.log_equity_snapshot(
             net_worth=account_state.get("net_worth"),
             free_cash=account_state.get("war_chest"),
-            voo_price=current_voo_price,
+            base_price=current_base_price,
             cash_flow=todays_deposit
         )
 
@@ -206,26 +212,28 @@ def main():
             features=market_data,
             regime=regime,
             war_chest=account_state.get("war_chest"),
-            target_buy=target_buy_amount,
-            order_id=order_response["order_id"],
-            status=order_response["status"]
+            target_orders=pending_orders,
+            order_responses=order_responses
         )
 
-        # Build the ultimate daily dispatch message, injecting the Reconciliation string
+        # Format Discord summary for multiple assets
+        order_details_str = ""
+        for sym, target_amount in pending_orders.items():
+            direction = "BUY" if target_amount > 0 else "SELL"
+            order_details_str += f"> **{sym}:** {direction} `${abs(target_amount):,.2f}`\n"
+
+        # UPDATED: Discord alert now dynamically prints the correct Base Asset ticker
         success_msg = (
             f"🟢 **Nightly Trading Pass Complete**\n"
             f"**Strategy Model: {STRATEGY_NAME} **\n"
             f"**1. Yesterday's Order Status:**\n"
             f"{reconciliation_summary.strip()}\n\n"
             f"**2. Tomorrow's Queued Execution:**\n"
-            f"> **Symbol:** {SYMBOL}\n"
             f"> **Regime Detected:** `{regime}`\n"
-            f"> **Target Order:** `${target_buy_amount:,.2f}`\n"
+            f"{order_details_str}"
             f"```text\n"
-            f"VOO Close:  ${market_data.get('close'):.2f}\n"
+            f"{base_sym} Close: ${current_base_price:.2f}\n"
             f"VIX Value:  {market_data.get('vix'):.2f}\n"
-            f"RSI Value:  {market_data.get('rsi'):.2f}\n"
-            f"Spread:     {market_data.get('spread'):.2f}\n"
             f"War Chest:  ${account_state.get('war_chest'):,.2f}\n"
             f"```"
         )
@@ -235,23 +243,11 @@ def main():
 
     except Exception as e:
         print(f"\n[FATAL ERROR] Unhandled exception during main loop: {e}")
-        # In a full production system, you would trigger an SNS / Email / Discord alert here.
-        # If ANYTHING in the script fails (internet down, Alpaca API crash, etc.)
         error_details = traceback.format_exc()
-        print(f"\n[FATAL ERROR] {e}")
-        error_msg = (
-            f"🚨 **CRITICAL BOT FAILURE** 🚨\n"
-            f"**Strategy Model: {STRATEGY_NAME} **\n"
-            f"The trading engine crashed during the nightly run.\n\n"
-            f"**Exception:** `{e}`\n"
-            f"**Traceback:**\n"
-        )
-        send_discord_alert(error_msg)
-
-        # Exit with an error code so the OS knows the cron job failed
+        send_discord_alert(
+            f"🚨 **CRITICAL BOT FAILURE** 🚨\n**Strategy Model: {STRATEGY_NAME} **\nThe trading engine crashed.\n\n**Exception:** `{e}`")
         sys.exit(1)
     finally:
-        # Always ensure the database connection is closed safely
         ledger.close()
 
 

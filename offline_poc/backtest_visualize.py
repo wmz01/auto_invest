@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 from backtester import ProfessionalBacktester
 from strategies.dummy_dca import DummyDCAStrategy
-from strategies.enhanced_dca import OverflowEDCAStrategy
+from strategies.enhanced_dca import OverflowEDCAStrategy, FixedSplitEDCA
 from strategies.dynamic_rebalance import DynamicRebalanceEDCA
+from strategies.fixed_split_baseline import FixedSplitStrategy
 
 
 def print_final_state(strategy_name: str, metrics: dict, config: dict):
@@ -114,20 +115,31 @@ def plot_backtest_results(baseline_df: pd.DataFrame, strategy_df: pd.DataFrame, 
 if __name__ == "__main__":
     BASE_TICKER = "SPY"
     LEV_TICKER = "TQQQ"
-
-    backtester = ProfessionalBacktester(
-        ticker=BASE_TICKER,
-        leveraged_ticker=LEV_TICKER,
-        daily_cash_flow=100.0
-    )
-
     sim_start = "2016-01-01"
     sim_end = "2025-07-15"
 
-    backtester.prepare_historical_data(start_date=sim_start, end_date=sim_end)
+    backtester = ProfessionalBacktester(daily_cash_flow=100.0)
+
+    # Pre-fetch every ticker any of your strategies might need
+    backtester.prepare_historical_data(
+        symbols=["QQQ", "SPY", "VGT", "VOO", "TQQQ"],
+        start_date=sim_start,
+        end_date=sim_end
+    )
+    config = {
+        "daily_budget": 100.0,
+        "target_ratio": 0.8,
+        "base_asset": "QQQ",  # The backtester will buy this
+        "leveraged_asset": "SPY",  # The backtester will buy this
+        "weight_base": 0.60,  # Allocates $60/day
+        "weight_lev": 0.40,  # Allocates $40/day
+    }
+
+    # 1. Instantiate Strategies
+    baseline_strategy = FixedSplitEDCA(config)
 
     config = {
-        "tax_rate": 0.0,
+        "tax_rate": 0.35,
         "daily_budget": 100.0,
         "target_ratio": 0.8,
         "base_asset": BASE_TICKER,
@@ -136,15 +148,12 @@ if __name__ == "__main__":
         "edca_heavy_mult": 2.0,
         "edca_severe_mult": 3.0,
     }
-
-    # 1. Instantiate Strategies
-    dummy_strategy = DummyDCAStrategy(config)
     overflow_strategy = DynamicRebalanceEDCA(config)
     # overflow_strategy = OverflowEDCAStrategy(config)
 
     # 2. Run Backtests
     print(f"\nRunning Baseline Dummy DCA ({BASE_TICKER})...")
-    base_metrics, base_df = backtester.run_custom_strategy(dummy_strategy)
+    base_metrics, base_df = backtester.run_custom_strategy(baseline_strategy)
 
     print(f"Running Overflow EDCA Strategy ({BASE_TICKER}/{LEV_TICKER})...")
     strat_metrics, strat_df = backtester.run_custom_strategy(overflow_strategy)

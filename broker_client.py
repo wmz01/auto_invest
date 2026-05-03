@@ -31,44 +31,71 @@ class LiveBroker:
         return status_str.lower()
 
     def get_account_state(self, current_price: float = None) -> dict:
-        """Retrieves live account state, or calculates simulated state."""
-        if not self.paper:
-            # ==========================================
-            # LIVE ACCOUNT: Query Alpaca API
-            # ==========================================
-            try:
-                account = self.client.get_account()
-                war_chest = float(account.non_marginable_buying_power)
-                net_worth = float(account.portfolio_value)
-                return {"net_worth": net_worth, "war_chest": war_chest}
-            except Exception as e:
-                error_msg = f"⚠️ **Broker Warning:** Failed to retrieve live account state (`{e}`)."
-                print(error_msg)
-                return {"net_worth": 0.0, "war_chest": 0.0}
-
-        else:
-            # ==========================================
-            # PAPER SIMULATION: Calculate from Database
-            # ==========================================
-            if not self.ledger or current_price is None:
-                raise ValueError("Ledger and current_price must be provided in paper mode.")
-
+        """
+        Dynamically calculates Net Worth based on ALL held assets.
+        Returns a detailed ledger of current holdings for rebalancing strategies.
+        """
+        if self.paper and self.ledger:
+            # Paper trading state routing (unchanged)
             state = self.ledger.get_paper_state()
+            if not state:
+                return {"net_worth": 0.0, "war_chest": 0.0, "current_holdings": {}}
 
-            # If the database is completely empty (e.g. before the first run)
-            if state is None:
-                return {"net_worth": 0.0, "war_chest": 0.0}
+            # Simple fallback for paper trading multi-asset simulation
+            net_worth = state['current_cash'] + (state['current_shares'] * (current_price or 0.0))
+            return {
+                "net_worth": net_worth,
+                "war_chest": state['current_cash'],
+                "current_holdings": {"BASE_ASSET_PAPER": state['current_shares']}
+            }
 
-            cash = state['current_cash']
-            shares = state['current_shares']
+        # LIVE MULTI-ASSET ROUTING
+        try:
+            account = self.api.get_account()
+            positions = self.api.list_positions()
 
-            # Net Worth = Uninvested Cash + Value of Holdings
-            net_worth = cash + (shares * current_price)
+            current_holdings = {}
+            total_shares_value = 0.0
+
+            # Dynamically aggregate all assets currently held in the Alpaca account
+            for pos in positions:
+                sym = pos.symbol
+                qty = float(pos.qty)
+                market_value = float(pos.market_value)
+
+                current_holdings[sym] = qty
+                total_shares_value += market_value
+
+            war_chest = float(account.cash)
+            net_worth = war_chest + total_shares_value
 
             return {
                 "net_worth": net_worth,
-                "war_chest": cash
+                "war_chest": war_chest,
+                "current_holdings": current_holdings
             }
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch live account state: {e}")
+            return {"net_worth": 0.0, "war_chest": 0.0, "current_holdings": {}}
+
+    def queue_market_on_open_sell(self, symbol: str, notional_amount: float) -> dict:
+        """Executes fractional sell orders to trim leverage and lock in profits."""
+        if self.paper:
+            print(f"[PAPER] Simulated SELL of ${notional_amount:,.2f} on {symbol}")
+            return {"order_id": f"sim_sell_{int(time.time())}", "status": "accepted"}
+
+        try:
+            order = self.api.submit_order(
+                symbol=symbol,
+                notional=notional_amount,
+                side='sell',
+                type='market',
+                time_in_force='day'
+            )
+            return {"order_id": order.id, "status": order.status}
+        except Exception as e:
+            print(f"[ERROR] Live SELL Order Failed: {e}")
+            return {"order_id": "FAILED", "status": "failed"}
 
     def get_todays_cash_flow(self) -> float:
         """Fetches live deposits, or simulates a bi-weekly paycheck in paper mode."""

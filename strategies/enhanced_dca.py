@@ -116,3 +116,61 @@ class OverflowEDCAStrategy(BaseStrategy):
                 self.leveraged_asset: round(tqqq_dollars, 2)
             }
         }
+
+class FixedSplitEDCA(BaseStrategy):
+    """
+    Enhanced DCA with Fixed Allocation Split:
+    Increases the total daily buy amount dynamically based on how far the
+    base asset has fallen from its peak. Protects cash during bull runs.
+    It then splits the final deployed cash between two assets based on fixed weights.
+    """
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.base_asset = self.config.get("base_asset", "QQQ")
+        self.leveraged_asset = self.config.get("leveraged_asset", "SPY")
+
+        self.weight_base = self.config.get("weight_base", 0.60)
+        self.weight_lev = self.config.get("weight_lev", 0.40)
+
+    def calculate_order_amount(self, market_data: dict, account_state: dict) -> dict:
+        daily_budget = self.config.get("daily_budget", 100.0)
+
+        # 0.85 means we spend $85 daily normally, hoarding $15 for the crash
+        base_buy = daily_budget * self.config.get("target_ratio", 0.85)
+
+        drawdown = market_data.get("drawdown", 0.0)
+        live_war_chest = account_state.get("war_chest", 0.0)
+
+        # 1. Determine Total Target Spend (Drawdown Logic)
+        if drawdown <= -0.20:
+            multiplier = self.config.get("edca_severe_mult", 3.0)
+            regime = "EDCA_SEVERE_CRASH"
+        elif drawdown <= -0.10:
+            multiplier = self.config.get("edca_heavy_mult", 2.0)
+            regime = "EDCA_HEAVY_CORRECTION"
+        elif drawdown <= -0.05:
+            multiplier = self.config.get("edca_mild_mult", 1.5)
+            regime = "EDCA_MILD_DIP"
+        else:
+            multiplier = 1.0
+            regime = "EDCA_BASELINE"
+
+        target_total_spend = base_buy * multiplier
+
+        # Guardrail: Cannot spend more cash than we actually have
+        actual_total_spend = min(target_total_spend, live_war_chest)
+        if actual_total_spend < 1.00:
+            actual_total_spend = 0.0
+
+        # 2. Split the Total Spend based on the configured weights
+        dollars_base = actual_total_spend * self.weight_base
+        dollars_lev = actual_total_spend * self.weight_lev
+
+        return {
+            "regime_detected": regime,
+            "target_orders": {
+                self.base_asset: round(dollars_base, 2),
+                self.leveraged_asset: round(dollars_lev, 2)
+            }
+        }

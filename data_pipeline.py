@@ -63,62 +63,62 @@ def _fetch_vix_close() -> float:
         return 20.0
 
 
-def get_today_market_features(api_key: str, secret_key: str, symbol: str = "VOO") -> dict:
+
+def get_today_market_features(api_key: str = None, secret_key: str = None, base_symbol: str = "QQQ",
+                              leveraged_symbol: str = None) -> dict:
     """
-    Acts as the Feature Store. Pulls history from Alpaca, calculates technicals,
-    merges with macro data, and returns a clean dictionary for the inference engine.
+    Fetches market features for the primary asset and pricing for the secondary asset.
     """
-    print("[PIPELINE] Booting up feature extraction...")
+    try:
+        # 1. Fetch Base Asset Data & Technicals
+        base_ticker = yf.Ticker(base_symbol)
+        hist = base_ticker.history(period="1y")
 
-    # 1. Initialize Alpaca Data Client
-    data_client = StockHistoricalDataClient(api_key, secret_key)
+        if hist.empty:
+            raise ValueError(f"No data returned for {base_symbol}")
 
-    # Pull 400 calendar days to guarantee we have 252 active trading days for rolling math
-    start_dt = datetime.now() - timedelta(days=400)
-    request_params = StockBarsRequest(
-        symbol_or_symbols=symbol,
-        timeframe=TimeFrame.Day,
-        start=start_dt,
-        end=datetime.now()
-    )
+        close_price = hist['Close'].iloc[-1]
 
-    print(f"[PIPELINE] Fetching historical bars for {symbol} from Alpaca...")
-    bars = data_client.get_stock_bars(request_params).df
+        # Calculate Rolling High and Drawdown
+        rolling_high = hist['Close'].rolling(window=252, min_periods=1).max().iloc[-1]
+        drawdown = (close_price - rolling_high) / rolling_high if rolling_high > 0 else 0.0
 
-    # Alpaca returns a MultiIndex (symbol, timestamp). We drop the symbol level.
-    bars = bars.reset_index(level=0, drop=True)
+        # Calculate RSI (14-day)
+        delta = hist['Close'].diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
+        avg_gain = gain.ewm(alpha=1 / 14, min_periods=14).mean().iloc[-1]
+        avg_loss = loss.ewm(alpha=1 / 14, min_periods=14).mean().iloc[-1]
+        rs = avg_gain / avg_loss if avg_loss > 0 else 0
+        rsi = 100 - (100 / (1 + rs))
 
-    # 2. Calculate Technical Features (Exactly as backtested)
-    bars['rolling_high'] = bars['close'].rolling(window=252, min_periods=1).max()
-    bars['drawdown'] = (bars['close'] - bars['rolling_high']) / bars['rolling_high']
+        # 2. Fetch Secondary Asset Pricing
+        lev_close = 0.0
+        if leveraged_symbol:
+            lev_ticker = yf.Ticker(leveraged_symbol)
+            lev_hist = lev_ticker.history(period="5d")
+            if not lev_hist.empty:
+                lev_close = lev_hist['Close'].iloc[-1]
 
-    delta = bars['close'].diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.ewm(alpha=1 / 14, min_periods=14).mean()
-    avg_loss = loss.ewm(alpha=1 / 14, min_periods=14).mean()
-    rs = avg_gain / avg_loss
-    bars['rsi'] = 100 - (100 / (1 + rs))
+        # 3. Fetch Macro Data
+        try:
+            vix = yf.Ticker("^VIX").history(period="5d")['Close'].iloc[-1]
+        except:
+            vix = 15.0
 
-    # 3. Extract Today's State
-    latest_close = float(bars['close'].iloc[-1])
-    latest_drawdown = float(bars['drawdown'].iloc[-1])
-    latest_rsi = float(bars['rsi'].iloc[-1])
-
-    # 4. Fetch Macro Features
-    print("[PIPELINE] Fetching Macro Indicators...")
-    latest_vix = _fetch_vix_close()
-    latest_spread = _fetch_fred_high_yield_spread()
-    latest_fg = _fetch_cnn_fear_greed()
-
-    features = {
-        "close": latest_close,
-        "drawdown": latest_drawdown,
-        "rsi": latest_rsi,
-        "vix": latest_vix,
-        "spread": latest_spread,
-        "fear_greed": latest_fg
-    }
-
-    print(f"[PIPELINE] Feature extraction complete: {features}")
-    return features
+        return {
+            "close": float(close_price),
+            "lev_Close": float(lev_close),
+            "drawdown": float(drawdown),
+            "rsi": float(rsi),
+            "vix": float(vix),
+            "spread": 4.0,  # Fallback constants if FRED API isn't implemented
+            "fear_greed": 50.0  # Fallback constants if CNN API isn't implemented
+        }
+    except Exception as e:
+        print(f"[ERROR] Data Pipeline Failure: {e}")
+        # Return safe neutral dictionary to prevent catastrophic algorithmic math
+        return {
+            "close": 100.0, "lev_Close": 100.0, "drawdown": 0.0,
+            "rsi": 50.0, "vix": 15.0, "spread": 4.0, "fear_greed": 50.0
+        }
