@@ -14,7 +14,7 @@ def send_discord_alert(message: str):
         return
 
     print("[INFO] Start sending messages to Discord")
-    message = "@everyone \n" + message
+    message = "@everyone \n" + message + "\n"
     data = {
         "content": message,
         "username": "Trading Alert Bot"
