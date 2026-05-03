@@ -324,6 +324,7 @@ class ProfessionalBacktester:
 
         # Track shares and pending orders individually for all active assets
         shares = {sym: 0.0 for sym in assets}
+        total_cost_basis = {sym: 0.0 for sym in assets}
         pending_buys = {sym: 0.0 for sym in assets}
         pending_sells = {sym: 0.0 for sym in assets}
 
@@ -331,29 +332,52 @@ class ProfessionalBacktester:
             open_price = row['Open']
             close_price = row['Close']
             day_counter += 1
-
             # 1. MORNING T+1 EXECUTION (Multi-Asset)
             for sym in assets:
-                # Route to the correct opening price
                 sym_open = row['Open'] if sym == self.ticker else row.get('lev_Open', np.nan)
+                if pd.isna(sym_open): continue
 
-                # Skip if the asset didn't exist yet (e.g., TQQQ before 2010)
-                if pd.isna(sym_open):
-                    continue
-
+                # --- PROCESS BUYS ---
                 if pending_buys[sym] > 0:
                     actual_buy = min(pending_buys[sym], war_chest)
+                    shares_bought = actual_buy / sym_open
+
                     war_chest -= actual_buy
-                    shares[sym] += (actual_buy / sym_open)
+                    shares[sym] += shares_bought
+                    total_cost_basis[sym] += actual_buy  # Add to cost basis pool
+
                     pending_buys[sym] = 0.0
 
+                # --- PROCESS SELLS (WITH TAX DRAG) ---
                 if pending_sells[sym] > 0:
-                    # Convert the dollar amount to sell into fractional shares
                     shares_to_sell = pending_sells[sym] / sym_open
                     actual_sell_shares = min(shares_to_sell, shares[sym])
 
-                    war_chest += (actual_sell_shares * sym_open)
-                    shares[sym] -= actual_sell_shares
+                    if actual_sell_shares > 0:
+                        revenue = actual_sell_shares * sym_open
+
+                        # 1. Calculate Average Cost per Share
+                        avg_cost_per_share = total_cost_basis[sym] / shares[sym]
+
+                        # 2. Calculate the original cost of the specific shares we are selling
+                        cost_of_shares_sold = actual_sell_shares * avg_cost_per_share
+
+                        # 3. Determine Profit and calculate Tax
+                        profit = revenue - cost_of_shares_sold
+                        tax_owed = 0.0
+
+                        # We assume a 35% configurable tax rate passed via the strategy config
+                        # If config doesn't have it, default to 0.0 so older scripts don't break
+                        tax_rate = strategy.config.get("tax_rate", 0.0)
+
+                        if profit > 0:
+                            tax_owed = profit * tax_rate
+
+                        # 4. Update Account State
+                        war_chest += (revenue - tax_owed)  # IRS takes their cut instantly
+                        shares[sym] -= actual_sell_shares
+                        total_cost_basis[sym] -= cost_of_shares_sold  # Remove cost basis of sold shares
+
                     pending_sells[sym] = 0.0
 
             # 2. BI-WEEKLY PAYCHECK
@@ -368,12 +392,14 @@ class ProfessionalBacktester:
             total_interest += interest_today
 
             # 4. EOD PORTFOLIO VALUATION (Multi-Asset)
-            shares_value = 0.0
-            for sym in assets:
-                sym_close = close_price if sym == self.ticker else row.get('lev_Close', np.nan)
+            base_value = shares[self.ticker] * close_price
+            lev_value = 0.0
+            if hasattr(self, 'leveraged_ticker') and self.leveraged_ticker:
+                sym_close = row.get('lev_Close', np.nan)
                 if not pd.isna(sym_close):
-                    shares_value += (shares[sym] * sym_close)
+                    lev_value = shares[self.leveraged_ticker] * sym_close
 
+            shares_value = base_value + lev_value
             net_worth = shares_value + war_chest
 
             tracking_records.append({
@@ -384,6 +410,8 @@ class ProfessionalBacktester:
                 "cash_injected": self.daily_cash_flow,
                 "total_injected": total_injected,
                 "total_interest": total_interest,
+                "base_value": base_value,
+                "lev_value": lev_value,
                 "shares_value": shares_value,
                 "war_chest": war_chest,
                 "net_worth": net_worth
@@ -398,7 +426,8 @@ class ProfessionalBacktester:
                 "rsi": row.get('rsi', 50.0),
                 "fear_greed": row.get('fear_greed', 50.0),
                 "drawdown": row.get('drawdown', 0.0),
-                "realized_vol_20d": row.get('realized_vol_20d', 0.15)
+                "realized_vol_20d": row.get('realized_vol_20d', 0.15),
+                "lev_Close": row.get('lev_Close', 0.0),
             }
 
             # Inject all dynamic window metrics
@@ -414,15 +443,31 @@ class ProfessionalBacktester:
 
             # Pass the data into the strategy object
             inference_result = strategy.calculate_order_amount(market_data, account_state)
-
             # 6. ROUTE ORDERS
             if "target_orders" in inference_result:
-                # NEW MODE: Multi-Asset Routing dict
+                # NEW MODE: Multi-Asset Routing dict (Handles both Buys and Sells)
                 for sym in assets:
-                    pending_buys[sym] = inference_result["target_orders"].get(sym, 0.0)
+                    target_dollar_amount = inference_result["target_orders"].get(sym, 0.0)
+
+                    if target_dollar_amount > 0:
+                        pending_buys[sym] = target_dollar_amount
+                        pending_sells[sym] = 0.0
+                    elif target_dollar_amount < 0:
+                        pending_sells[sym] = abs(target_dollar_amount)
+                        pending_buys[sym] = 0.0
+                    else:
+                        pending_buys[sym] = 0.0
+                        pending_sells[sym] = 0.0
             else:
-                # LEGACY MODE: Backwards compatibility for your old single-asset models
+                # LEGACY MODE: Backwards compatibility
                 pending_buys[self.ticker] = inference_result.get("target_buy_amount", 0.0)
                 pending_sells[self.ticker] = inference_result.get("target_sell_amount", 0.0)
 
-        return self._calculate_metrics(pd.DataFrame(tracking_records).set_index("Date"))
+        df_tracking = pd.DataFrame(tracking_records).set_index("Date")
+        metrics = self._calculate_metrics(df_tracking)
+
+        metrics['final_base_shares'] = shares[self.ticker]
+        if hasattr(self, 'leveraged_ticker') and self.leveraged_ticker:
+            metrics['final_lev_shares'] = shares[self.leveraged_ticker]
+
+        return metrics, df_tracking

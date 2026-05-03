@@ -8,6 +8,7 @@ from strategies.volatility_targeting import VolatilityTargetingStrategy
 from strategies.enhanced_dca import EnhancedDCAStrategy, OverflowEDCAStrategy
 from strategies.moving_avg_dca import MovingAverageDCAStrategy
 from strategies.zscore_leverage import ZScoreMarginStrategy, ZScoreBaseStrategy, FlowScaledZScoreStrategy
+from strategies.dynamic_rebalance import DynamicRebalanceEDCA
 from backtester import ProfessionalBacktester
 
 
@@ -67,12 +68,13 @@ if __name__ == "__main__":
     )
 
     sim_start = "2016-01-01"
-    sim_end = "2025-04-01"
+    sim_end = None
 
     backtester.prepare_historical_data(start_date=sim_start, end_date=sim_end)
 
     # 1. Universal Config for custom strategies
     config = {
+        "tax_rate": 0.35,
         "daily_budget": 100.0,
         "target_ratio": 0.8,
         "lambda_replenish": 0.3,
@@ -111,16 +113,18 @@ if __name__ == "__main__":
     ma_strategy = MovingAverageDCAStrategy(config)
     zscore_strategy = ZScoreBaseStrategy(config)
     overflow_strategy = OverflowEDCAStrategy(config)
+    rebalance_strategy = DynamicRebalanceEDCA(config)
 
     # 4. Run through the engine
-    edca_results = backtester.run_custom_strategy(edca_strategy)
-    ma_results = backtester.run_custom_strategy(ma_strategy)
-    dummy_results = backtester.run_custom_strategy(dummy_strategy)
-    static_ratio_results = backtester.run_custom_strategy(static_ratio_strategy)
-    vol_results = backtester.run_custom_strategy(vol_target_strategy)
-    dynamic_results = backtester.run_custom_strategy(dynamic_strategy)
-    zscore_results = backtester.run_custom_strategy(zscore_strategy)
-    overflow_results = backtester.run_custom_strategy(overflow_strategy)
+    edca_results, _ = backtester.run_custom_strategy(edca_strategy)
+    ma_results, _ = backtester.run_custom_strategy(ma_strategy)
+    dummy_results, _ = backtester.run_custom_strategy(dummy_strategy)
+    static_ratio_results, _ = backtester.run_custom_strategy(static_ratio_strategy)
+    vol_results, _ = backtester.run_custom_strategy(vol_target_strategy)
+    dynamic_results, _ = backtester.run_custom_strategy(dynamic_strategy)
+    zscore_results, _ = backtester.run_custom_strategy(zscore_strategy)
+    overflow_results, _ = backtester.run_custom_strategy(overflow_strategy)
+    rebalance_results, _ = backtester.run_custom_strategy(rebalance_strategy)
 
     all_results = {
         "CONTROL 1: DUMMY ISO CLASS": dummy_results,
@@ -130,7 +134,8 @@ if __name__ == "__main__":
         "CONTROL 5: MOVING AVERAGE DCA": ma_results,
         "EXPERIMENTAL: DYNAMIC REGIME ISO CLASS": dynamic_results,
         "EXPERIMENTAL 2: Z-SCORE CONVEXITY": zscore_results,
-        "EXPERIMENTAL 3: OVERFLOW TQQQ": overflow_results
+        "EXPERIMENTAL 3: OVERFLOW TQQQ": overflow_results,
+        "EXPERIMENTAL 4: DYNAMIC REBALANCING": rebalance_results
     }
 
     for strategy_name, result_metrics in all_results.items():

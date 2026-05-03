@@ -1,3 +1,5 @@
+import fear_and_greed
+
 from .base_strategy import BaseStrategy
 
 
@@ -28,9 +30,6 @@ class EnhancedDCAStrategy(BaseStrategy):
         elif drawdown <= -0.05:
             multiplier = self.config.get("edca_mild_mult", 1.5)  # -5% Dip
             regime = "EDCA_MILD"
-        # elif drawdown >= -0.01:
-        #     multiplier = 0.75
-        #     regime = "GREEDY"
         else:
             multiplier = 1.0  # Bull Market / ATH
             regime = "EDCA_BASELINE"
@@ -67,12 +66,16 @@ class OverflowEDCAStrategy(BaseStrategy):
     def calculate_order_amount(self, market_data: dict, account_state: dict) -> dict:
         drawdown = market_data.get("drawdown", 0.0)
         live_war_chest = account_state.get("war_chest", 0.0)
-
+        fear_and_greed = market_data.get("fear_greed", 50.0)
+        rsi = market_data.get("rsi", 50)
+        vix = market_data.get("vix", 50)
         # Baseline QQQ purchase
         base_buy = self.daily_budget * self.target_ratio
 
         # 1. Determine Total Target Spend (EDCA Logic)
-        if drawdown <= -0.20:
+        # if drawdown <= -0.20 and fear_and_greed < 25:
+        # if drawdown <= -0.20 and rsi < 30:
+        if drawdown <= -0.20 and vix > 30:
             multiplier = self.config.get("edca_severe_mult", 3.0)  # e.g., 3.0 * $80 = $240
             regime = "EDCA_SEVERE_CRASH"
         elif drawdown <= -0.10:
@@ -81,8 +84,9 @@ class OverflowEDCAStrategy(BaseStrategy):
         elif drawdown <= -0.05:
             multiplier = self.config.get("edca_mild_mult", 1.5)  # e.g., 1.5 * $80 = $120
             regime = "EDCA_MILD_DIP"
-        elif drawdown >= -0.01:
-            multiplier = 0.8  # e.g., 1.5 * $80 = $120
+        elif drawdown >= -0.01 and rsi > 70.0:
+            # When at ATH and overbought, aggressively hoard cash
+            multiplier = 0.5
             regime = "EDCA_GREEDY"
         else:
             multiplier = 1.0  # e.g., 1.0 * $80 = $80

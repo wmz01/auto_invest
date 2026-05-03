@@ -105,12 +105,12 @@ if __name__ == "__main__":
     ma_strategy = MovingAverageDCAStrategy(config)
 
     # 4. Run through the engine
-    edca_results = backtester.run_custom_strategy(edca_strategy)
-    ma_results = backtester.run_custom_strategy(ma_strategy)
-    dummy_results = backtester.run_custom_strategy(dummy_strategy)
-    static_ratio_results = backtester.run_custom_strategy(static_ratio_strategy)
-    vol_results = backtester.run_custom_strategy(vol_target_strategy)
-    dynamic_results = backtester.run_custom_strategy(dynamic_strategy)
+    edca_results, _ = backtester.run_custom_strategy(edca_strategy)
+    ma_results, _ = backtester.run_custom_strategy(ma_strategy)
+    dummy_results, _ = backtester.run_custom_strategy(dummy_strategy)
+    static_ratio_results, _ = backtester.run_custom_strategy(static_ratio_strategy)
+    vol_results, _ = backtester.run_custom_strategy(vol_target_strategy)
+    dynamic_results, _ = backtester.run_custom_strategy(dynamic_strategy)
 
     all_results = {
         "CONTROL 1: DUMMY ISO CLASS": dummy_results,
