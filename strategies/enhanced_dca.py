@@ -138,6 +138,7 @@ class FixedSplitEDCA(BaseStrategy):
 
         # 0.85 means we spend $85 daily normally, hoarding $15 for the crash
         base_buy = daily_budget * self.config.get("target_ratio", 0.85)
+        rsi = market_data.get("rsi", 50)
 
         drawdown = market_data.get("drawdown", 0.0)
         live_war_chest = account_state.get("war_chest", 0.0)
@@ -152,6 +153,10 @@ class FixedSplitEDCA(BaseStrategy):
         elif drawdown <= -0.05:
             multiplier = self.config.get("edca_mild_mult", 1.5)
             regime = "EDCA_MILD_DIP"
+        # elif drawdown >= -0.01 and rsi > 70.0:
+        #     # When at ATH and overbought, aggressively hoard cash
+        #     multiplier = 0.5
+        #     regime = "EDCA_GREEDY"
         else:
             multiplier = 1.0
             regime = "EDCA_BASELINE"

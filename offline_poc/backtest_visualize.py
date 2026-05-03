@@ -114,7 +114,7 @@ def plot_backtest_results(baseline_df: pd.DataFrame, strategy_df: pd.DataFrame, 
 # ============================================================
 if __name__ == "__main__":
     BASE_TICKER = "SPY"
-    LEV_TICKER = "TQQQ"
+    LEV_TICKER = "QQQ"
     sim_start = "2016-01-01"
     sim_end = "2025-07-15"
 
@@ -131,8 +131,8 @@ if __name__ == "__main__":
         "target_ratio": 0.8,
         "base_asset": "QQQ",  # The backtester will buy this
         "leveraged_asset": "SPY",  # The backtester will buy this
-        "weight_base": 0.60,  # Allocates $60/day
-        "weight_lev": 0.40,  # Allocates $40/day
+        "weight_base": 0.2,  # Allocates $60/day
+        "weight_lev": 0.65,  # Allocates $40/day
     }
 
     # 1. Instantiate Strategies
@@ -149,8 +149,8 @@ if __name__ == "__main__":
         "edca_heavy_mult": 2.0,
         "edca_severe_mult": 3.0,
     }
-    # experiment_strategy = DynamicRebalanceEDCA(config)
-    experiment_strategy = OverflowEDCAStrategy(config)
+    experiment_strategy = DynamicRebalanceEDCA(config)
+    # experiment_strategy = OverflowEDCAStrategy(config)
 
     # 2. Run Backtests
     print(f"\nRunning Baseline Strategy...")

@@ -32,6 +32,17 @@ def main():
         help="The name of the strategy to execute."
     )
     parser.add_argument(
+        "--base_asset",
+        type=str,
+        required=True,
+        help="The name of the base asset to purchase"
+    )
+    parser.add_argument(
+        "--secondary_asset",
+        type=str,
+        help="The name of the secondary/leveraged asset to purchase"
+    )
+    parser.add_argument(
         "--live_mode",
         action='store_true',
         help="Enabling live mode (in contrast to paper money)"
@@ -39,12 +50,15 @@ def main():
     parser.add_argument(
         "--is_test",
         action='store_true',
-        help="For paper account, we split the data into test or control groups for A/B tests. If enabled, then it's test group, otherwise it's control group")
+        help="For paper account, we split the data into test or control groups for A/B tests. If enabled, then it's test group, otherwise it's control group"
+    )
     args = parser.parse_args()
 
     STRATEGY_NAME = args.strategy
     PAPER_TRADING_MODE = not args.live_mode
     is_test_group = args.is_test
+    BASE_ASSET = args.base_asset
+    SECONDARY_ASSET = args.secondary_asset
 
     print("==================================================")
     print(f" INITIATING T+1 ORCHESTRATOR: {STRATEGY_NAME.upper()} ")
@@ -75,8 +89,8 @@ def main():
     STRATEGY_CONFIG = {
         "daily_budget": 100.0,
         "target_ratio": 0.85,
-        "base_asset": "QQQ",  # Core Asset
-        "leveraged_asset": "SPY",  # Secondary/Leveraged Asset
+        "base_asset": BASE_ASSET,  # Core Asset
+        "leveraged_asset": SECONDARY_ASSET,  # Secondary/Leveraged Asset
         "weight_base": 0.60,
         "weight_lev": 0.40,
         "edca_mild_mult": 1.5,
