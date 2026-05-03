@@ -13,6 +13,8 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
+from notifier import send_discord_alert
+
 # Load environment variables
 load_dotenv()
 API_KEY = os.getenv("ALPACA_API_KEY_REAL_CASH")
@@ -236,6 +238,7 @@ if __name__ == "__main__":
 
     # 1. Fetch High-Res Intraday Pricing
     archiver.fetch_intraday_bars(["VOO", "SPY", "QQQ", "TLT", "GLD"])
+    # message = ""
 
     # 2. Fetch Point-in-Time Macro, Breadth, and Options Sentiment
     archiver.fetch_macro_and_sentiment()

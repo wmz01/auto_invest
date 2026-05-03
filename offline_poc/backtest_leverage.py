@@ -1,19 +1,13 @@
 import os
-import io
-import requests
-import yfinance as yf
-import numpy as np
-from datetime import datetime
-from random import choice
 
 import pandas as pd
 from strategies.dummy_dca import DummyDCAStrategy
 from strategies.dynamic_regime import DynamicRegimeStrategy
 from strategies.static_ratio_dca import StaticRatioDCAStrategy
 from strategies.volatility_targeting import VolatilityTargetingStrategy
-from strategies.enhanced_dca import EnhancedDCAStrategy
+from strategies.enhanced_dca import EnhancedDCAStrategy, OverflowEDCAStrategy
 from strategies.moving_avg_dca import MovingAverageDCAStrategy
-from strategies.zscore_leverage import ZScoreLeverageStrategy
+from strategies.zscore_leverage import ZScoreMarginStrategy, ZScoreBaseStrategy, FlowScaledZScoreStrategy
 from backtester import ProfessionalBacktester
 
 
@@ -63,11 +57,17 @@ def print_report(title: str, results: dict):
 # EXECUTION
 # ============================================================
 if __name__ == "__main__":
-    symbol = "VOO"
-    backtester = ProfessionalBacktester(ticker=symbol, daily_cash_flow=100.0)
+
+    symbol = "SPY"
+    leverage_asset = "TQQQ"
+    backtester = ProfessionalBacktester(
+        ticker=symbol,
+        leveraged_ticker=leverage_asset,
+        daily_cash_flow=100.0
+    )
 
     sim_start = "2016-01-01"
-    sim_end = None
+    sim_end = "2025-04-01"
 
     backtester.prepare_historical_data(start_date=sim_start, end_date=sim_end)
 
@@ -94,6 +94,12 @@ if __name__ == "__main__":
         "edca_severe_mult": 4.0,
         # moving avg dca config
         "ma_aggressiveness": 3.0,
+        # Z-Score Leverage config
+        "lookback_window": 50,  # Dynamic MA/Z-Score window to use
+        "start_z": -1.5,  # Start scaling into TQQQ here
+        "max_z": -3.0,  # 100% TQQQ here
+        "base_asset": symbol,
+        "leveraged_asset": leverage_asset
     }
 
     # 2. Instantiate your LIVE strategy files
@@ -103,6 +109,8 @@ if __name__ == "__main__":
     dynamic_strategy = DynamicRegimeStrategy(config)
     edca_strategy = EnhancedDCAStrategy(config)
     ma_strategy = MovingAverageDCAStrategy(config)
+    zscore_strategy = ZScoreBaseStrategy(config)
+    overflow_strategy = OverflowEDCAStrategy(config)
 
     # 4. Run through the engine
     edca_results = backtester.run_custom_strategy(edca_strategy)
@@ -111,6 +119,8 @@ if __name__ == "__main__":
     static_ratio_results = backtester.run_custom_strategy(static_ratio_strategy)
     vol_results = backtester.run_custom_strategy(vol_target_strategy)
     dynamic_results = backtester.run_custom_strategy(dynamic_strategy)
+    zscore_results = backtester.run_custom_strategy(zscore_strategy)
+    overflow_results = backtester.run_custom_strategy(overflow_strategy)
 
     all_results = {
         "CONTROL 1: DUMMY ISO CLASS": dummy_results,
@@ -118,7 +128,9 @@ if __name__ == "__main__":
         "CONTROL 3: VOLATILITY TARGETING ISO": vol_results,
         "CONTROL 4: ENHANCED DCA": edca_results,
         "CONTROL 5: MOVING AVERAGE DCA": ma_results,
-        "EXPERIMENTAL: DYNAMIC REGIME ISO CLASS": dynamic_results
+        "EXPERIMENTAL: DYNAMIC REGIME ISO CLASS": dynamic_results,
+        "EXPERIMENTAL 2: Z-SCORE CONVEXITY": zscore_results,
+        "EXPERIMENTAL 3: OVERFLOW TQQQ": overflow_results
     }
 
     for strategy_name, result_metrics in all_results.items():

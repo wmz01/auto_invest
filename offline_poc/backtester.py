@@ -17,8 +17,11 @@ USER_AGENTS = [
 
 
 class ProfessionalBacktester:
-    def __init__(self, ticker: str = "VOO", daily_cash_flow: float = 100.0, risk_free_rate: float = 0.042):
+    def __init__(self, ticker: str = "VOO", leveraged_ticker: str = None, daily_cash_flow: float = 100.0,
+                 risk_free_rate: float = 0.042):
         self.ticker = ticker
+        self.leveraged_ticker = leveraged_ticker
+        self.benchmark_ticker = "SPY"
         self.daily_cash_flow = daily_cash_flow
         self.biweekly_injection = daily_cash_flow * 10  # 10 trading days per 2 weeks
         self.risk_free_rate = risk_free_rate
@@ -71,16 +74,13 @@ class ProfessionalBacktester:
         os.makedirs(cache_dir, exist_ok=True)
 
         macro_cache_file = os.path.join(cache_dir, "macro_data.csv")
-        symbol_cache_file = os.path.join(cache_dir, f"{self.ticker}_price_data.csv")
 
         latest_market_date = self._get_latest_market_date()
         target_end_date = pd.to_datetime(end_date) if end_date else latest_market_date
         required_freshness = min(latest_market_date, target_end_date)
 
         macro_df = pd.DataFrame()
-        symbol_df = pd.DataFrame()
         fetch_macro = True
-        fetch_symbol = True
         overlap_days = 5
 
         # --- MACRO DATA ---
@@ -91,6 +91,7 @@ class ProfessionalBacktester:
                 print(f"[CACHE HIT] Macro Data up-to-date.")
 
         if fetch_macro or force_fetch:
+            print("[FETCHING] Downloading fresh Macro Data...")
             if not macro_df.empty:
                 fetch_start = macro_df.index.max() - pd.Timedelta(days=overlap_days)
                 vix = yf.Ticker("^VIX").history(start=fetch_start.strftime('%Y-%m-%d'))
@@ -118,15 +119,68 @@ class ProfessionalBacktester:
 
             macro_df.to_csv(macro_cache_file)
 
-        # --- SYMBOL DATA ---
-        if os.path.exists(symbol_cache_file):
-            symbol_df = pd.read_csv(symbol_cache_file, index_col=0, parse_dates=True)
+        # --- SYMBOL DATA (Decoupled Architecture) ---
+        # 1. Fetch Primary Asset
+        base_df = self._get_symbol_data(self.ticker, required_freshness, force_fetch)
+        if base_df.empty:
+            raise ValueError(f"Failed to load primary asset {self.ticker}")
+
+        # 2. Fetch Leveraged Asset
+        if hasattr(self, 'leveraged_ticker') and self.leveraged_ticker:
+            lev_df = self._get_symbol_data(self.leveraged_ticker, required_freshness, force_fetch)
+            if not lev_df.empty:
+                base_df['lev_Open'] = lev_df['Open']
+                base_df['lev_Close'] = lev_df['Close']
+
+        # 3. Fetch Benchmark Asset
+        if hasattr(self, 'benchmark_ticker') and self.benchmark_ticker:
+            bench_df = self._get_symbol_data(self.benchmark_ticker, required_freshness, force_fetch)
+            if not bench_df.empty:
+                base_df['bench_Close'] = bench_df['Close']
+            else:
+                base_df['bench_Close'] = base_df['Close']  # Safe fallback
+        else:
+            base_df['bench_Close'] = base_df['Close']  # Safe fallback
+
+        # --- MERGE & SLICE ---
+        df = base_df.join(macro_df).dropna(subset=['Close']).copy()
+        mask = (df.index >= pd.to_datetime(start_date))
+        if end_date:
+            mask = mask & (df.index <= pd.to_datetime(end_date))
+
+        self.data = df.loc[mask].copy()
+        if self.data.empty:
+            raise ValueError("Simulation window returned no data. Check your dates.")
+
+        print(f"Loaded {len(self.data)} active trading days for the backtest.")
+
+    def _get_symbol_data(self, symbol: str, required_freshness: pd.Timestamp,
+                         force_fetch: bool = False) -> pd.DataFrame:
+        """
+        Universally fetches, caches, and calculates metrics for ANY given symbol.
+        Treats every asset as a standalone entity to prevent cache corruption.
+        """
+        if not symbol: return pd.DataFrame()
+
+        cache_dir = "market_cache"
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{symbol}_price_data.csv")
+
+        symbol_df = pd.DataFrame()
+        fetch_symbol = True
+        overlap_days = 5
+
+        # 1. Check existing isolated cache
+        if os.path.exists(cache_file):
+            symbol_df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
             if not symbol_df.empty and 'Open' in symbol_df.columns and symbol_df.index.max() >= required_freshness:
                 fetch_symbol = False
-                print(f"[CACHE HIT] Symbol Data for {self.ticker} up-to-date.")
+                print(f"[CACHE HIT] Symbol Data for {symbol} is up-to-date.")
 
+        # 2. Fetch from Yahoo Finance if missing or stale
         if fetch_symbol or force_fetch:
-            asset = yf.Ticker(self.ticker)
+            print(f"[FETCHING] Downloading fresh data for {symbol}...")
+            asset = yf.Ticker(symbol)
             if not symbol_df.empty and 'Open' in symbol_df.columns:
                 fetch_start = symbol_df.index.max() - pd.Timedelta(days=overlap_days)
                 new_symbol = asset.history(start=fetch_start.strftime('%Y-%m-%d'))
@@ -135,10 +189,13 @@ class ProfessionalBacktester:
                     [symbol_df[['Open', 'Close']][symbol_df.index < fetch_start], new_symbol[['Open', 'Close']]])
             else:
                 symbol_df = asset.history(period="max")
-                if symbol_df.empty: raise ValueError(f"Failed to fetch asset data.")
+                if symbol_df.empty:
+                    print(f"[WARNING] Failed to fetch {symbol}")
+                    return pd.DataFrame()
                 symbol_df.index = symbol_df.index.tz_localize(None).normalize()
                 symbol_df = symbol_df[['Open', 'Close']].copy()
 
+            # 3. Calculate all standard metrics universally for this symbol
             symbol_df['rolling_high'] = symbol_df['Close'].rolling(window=252, min_periods=1).max()
             symbol_df['drawdown'] = (symbol_df['Close'] - symbol_df['rolling_high']) / symbol_df['rolling_high']
 
@@ -149,22 +206,23 @@ class ProfessionalBacktester:
             avg_loss = loss.ewm(alpha=1 / 14, min_periods=14).mean()
             rs = avg_gain / avg_loss
             symbol_df['rsi'] = 100 - (100 / (1 + rs))
-            symbol_df['sma_200'] = symbol_df['Close'].rolling(window=200, min_periods=1).mean()
             symbol_df['realized_vol_20d'] = symbol_df['Close'].pct_change().rolling(window=20).std() * np.sqrt(252)
 
-            symbol_df = symbol_df.dropna().copy()
-            symbol_df.to_csv(symbol_cache_file)
+            # Dynamic Moving Averages and Z-Scores
+            for window in [20, 50, 100, 200]:
+                symbol_df[f'sma_{window}'] = symbol_df['Close'].rolling(window=window, min_periods=1).mean()
+                symbol_df[f'std_{window}'] = symbol_df['Close'].rolling(window=window, min_periods=1).std()
+                symbol_df[f'z_score_{window}'] = np.where(
+                    symbol_df[f'std_{window}'] > 0,
+                    (symbol_df['Close'] - symbol_df[f'sma_{window}']) / symbol_df[f'std_{window}'],
+                    0.0
+                )
 
-        # --- MERGE & SLICE ---
-        df = symbol_df.join(macro_df).dropna().copy()
-        mask = (df.index >= pd.to_datetime(start_date))
-        if end_date:
-            mask = mask & (df.index <= pd.to_datetime(end_date))
+            # 4. Save to isolated cache
+            symbol_df = symbol_df.dropna(subset=['Close']).copy()
+            symbol_df.to_csv(cache_file)
 
-        self.data = df.loc[mask].copy()
-        if self.data.empty: raise ValueError("Simulation window returned no data. Check your dates.")
-        print(f"Loaded {len(self.data)} active trading days for the backtest.")
-
+        return symbol_df
     def _calculate_metrics(self, tracking_df: pd.DataFrame) -> dict:
         days = (tracking_df.index[-1] - tracking_df.index[0]).days
         years_elapsed = days / 365.25
@@ -194,6 +252,7 @@ class ProfessionalBacktester:
         twr_index = (1 + tracking_df['strat_return']).cumprod()
         twr_cagr = (twr_index.iloc[-1] ** (1 / years_elapsed)) - 1
 
+        # ... [keep the top part of the function the same] ...
         running_max = twr_index.cummax()
         mdd = ((twr_index - running_max) / running_max).min()
 
@@ -201,7 +260,11 @@ class ProfessionalBacktester:
         high_dates = tracking_df.index[is_high]
         max_recovery_days = (high_dates.to_series().diff().max()).days if len(high_dates) > 1 else days
 
-        market_returns = tracking_df['Close'].pct_change().fillna(0)
+        # --- NEW: Calculate Risk Metrics strictly against SPY ---
+        # 1. Market Returns are now SPY returns, not QQQ returns
+        market_returns = tracking_df['bench_Close'].pct_change().fillna(0)
+
+        # 2. Covariance of Strategy Returns against SPY
         cov = tracking_df['strat_return'].cov(market_returns)
         var = market_returns.var()
         beta = cov / var if var > 0 else 1.0
@@ -213,7 +276,11 @@ class ProfessionalBacktester:
         down_dev_ann = np.sqrt(np.mean(downside_returns ** 2)) * np.sqrt(252) if len(downside_returns) > 0 else 0.0
         sortino = (twr_cagr - self.risk_free_rate) / down_dev_ann if down_dev_ann > 0 else 0.0
 
-        market_cagr = ((tracking_df['Close'].iloc[-1] / tracking_df['Close'].iloc[0]) ** (1 / years_elapsed)) - 1
+        # 3. Market CAGR is now SPY CAGR
+        market_cagr = ((tracking_df['bench_Close'].iloc[-1] / tracking_df['bench_Close'].iloc[0]) ** (
+                    1 / years_elapsed)) - 1
+
+        # 4. CAPM Alpha calculation uses SPY expected return
         alpha = twr_cagr - (self.risk_free_rate + beta * (market_cagr - self.risk_free_rate))
         treynor = (twr_cagr - self.risk_free_rate) / beta if beta > 0 else 0.0
         calmar = twr_cagr / abs(mdd) if mdd < 0 else 0.0
@@ -240,39 +307,54 @@ class ProfessionalBacktester:
     def run_custom_strategy(self, strategy) -> dict:
         """
         Universal engine that evaluates any class inheriting from BaseStrategy.
+        Supports both single-asset and multi-asset tactical allocation.
         """
         df = self.data.copy()
         day_counter = 0
         tracking_records = []
 
         war_chest = 0.0
-        cumulative_shares = 0.0
         total_injected = 0.0
         total_interest = 0.0
 
-        pending_buy_amount = 0.0
-        pending_sell_amount = 0.0
+        # Dynamic asset list (safely handles if leveraged_ticker isn't set)
+        assets = [self.ticker]
+        if hasattr(self, 'leveraged_ticker') and self.leveraged_ticker:
+            assets.append(self.leveraged_ticker)
+
+        # Track shares and pending orders individually for all active assets
+        shares = {sym: 0.0 for sym in assets}
+        pending_buys = {sym: 0.0 for sym in assets}
+        pending_sells = {sym: 0.0 for sym in assets}
 
         for date, row in df.iterrows():
             open_price = row['Open']
             close_price = row['Close']
             day_counter += 1
 
-            # 1. MORNING T+1 EXECUTION
-            if pending_buy_amount > 0:
-                actual_buy = min(pending_buy_amount, war_chest)
-                war_chest -= actual_buy
-                cumulative_shares += (actual_buy / open_price)
-                pending_buy_amount = 0.0
+            # 1. MORNING T+1 EXECUTION (Multi-Asset)
+            for sym in assets:
+                # Route to the correct opening price
+                sym_open = row['Open'] if sym == self.ticker else row.get('lev_Open', np.nan)
 
-            if pending_sell_amount > 0:
-                # Convert the dollar amount to sell into fractional shares
-                shares_to_sell = pending_sell_amount / open_price
-                actual_sell_shares = min(shares_to_sell, cumulative_shares)
+                # Skip if the asset didn't exist yet (e.g., TQQQ before 2010)
+                if pd.isna(sym_open):
+                    continue
 
-                war_chest += (actual_sell_shares * open_price)
-                cumulative_shares -= actual_sell_shares
-                pending_sell_amount = 0.0
+                if pending_buys[sym] > 0:
+                    actual_buy = min(pending_buys[sym], war_chest)
+                    war_chest -= actual_buy
+                    shares[sym] += (actual_buy / sym_open)
+                    pending_buys[sym] = 0.0
+
+                if pending_sells[sym] > 0:
+                    # Convert the dollar amount to sell into fractional shares
+                    shares_to_sell = pending_sells[sym] / sym_open
+                    actual_sell_shares = min(shares_to_sell, shares[sym])
+
+                    war_chest += (actual_sell_shares * sym_open)
+                    shares[sym] -= actual_sell_shares
+                    pending_sells[sym] = 0.0
 
             # 2. BI-WEEKLY PAYCHECK
             if day_counter % 10 == 1:
@@ -285,20 +367,30 @@ class ProfessionalBacktester:
             war_chest += interest_today
             total_interest += interest_today
 
-            # 4. EOD PORTFOLIO VALUATION
-            shares_value = cumulative_shares * close_price
+            # 4. EOD PORTFOLIO VALUATION (Multi-Asset)
+            shares_value = 0.0
+            for sym in assets:
+                sym_close = close_price if sym == self.ticker else row.get('lev_Close', np.nan)
+                if not pd.isna(sym_close):
+                    shares_value += (shares[sym] * sym_close)
+
             net_worth = shares_value + war_chest
 
             tracking_records.append({
-                "Date": date, "Open": open_price, "Close": close_price, "cash_injected": self.daily_cash_flow,
-                "total_injected": total_injected, "total_interest": total_interest,
-                "shares_value": shares_value, "war_chest": war_chest, "net_worth": net_worth
+                "Date": date,
+                "Open": open_price,
+                "Close": close_price,
+                "bench_Close": row.get('bench_Close', close_price),
+                "cash_injected": self.daily_cash_flow,
+                "total_injected": total_injected,
+                "total_interest": total_interest,
+                "shares_value": shares_value,
+                "war_chest": war_chest,
+                "net_worth": net_worth
             })
 
             # 5. ALGORITHM GENERATES TOMORROW'S ORDER
-            # Map the DataFrame row to the exact dictionary format the live bot expects
-            # 5. ALGORITHM GENERATES TOMORROW'S ORDER
-            # Map the DataFrame row to the exact dictionary format the live bot expects
+            # Dynamically pack all pre-computed MAs and Z-Scores into the payload
             market_data = {
                 "close": close_price,
                 "vix": row.get('vix', 15.0),
@@ -306,20 +398,31 @@ class ProfessionalBacktester:
                 "rsi": row.get('rsi', 50.0),
                 "fear_greed": row.get('fear_greed', 50.0),
                 "drawdown": row.get('drawdown', 0.0),
-                "realized_vol_20d": row.get('realized_vol_20d', 0.15),
-                "sma_200": row.get('sma_200', close_price)
+                "realized_vol_20d": row.get('realized_vol_20d', 0.15)
             }
+
+            # Inject all dynamic window metrics
+            for window in [20, 50, 100, 200]:
+                market_data[f"sma_{window}"] = row.get(f"sma_{window}", close_price)
+                market_data[f"z_score_{window}"] = row.get(f"z_score_{window}", 0.0)
 
             account_state = {
                 "net_worth": net_worth,
-                "war_chest": war_chest
+                "war_chest": war_chest,
+                "current_holdings": shares  # Useful for strategies that need to rebalance
             }
 
             # Pass the data into the strategy object
             inference_result = strategy.calculate_order_amount(market_data, account_state)
 
-            # <-- FIX 2: Extract BOTH buy and sell signals -->
-            pending_buy_amount = inference_result.get("target_buy_amount", 0.0)
-            pending_sell_amount = inference_result.get("target_sell_amount", 0.0)
+            # 6. ROUTE ORDERS
+            if "target_orders" in inference_result:
+                # NEW MODE: Multi-Asset Routing dict
+                for sym in assets:
+                    pending_buys[sym] = inference_result["target_orders"].get(sym, 0.0)
+            else:
+                # LEGACY MODE: Backwards compatibility for your old single-asset models
+                pending_buys[self.ticker] = inference_result.get("target_buy_amount", 0.0)
+                pending_sells[self.ticker] = inference_result.get("target_sell_amount", 0.0)
 
         return self._calculate_metrics(pd.DataFrame(tracking_records).set_index("Date"))
